@@ -1,0 +1,44 @@
+{
+  "enabled": true,
+  "model": "gpt-4o",
+  "temperature": 0.3,
+  "max_files_per_review": 50,
+  "review_categories": {
+    "code_quality": true,
+    "potential_bugs": true,
+    "security": true,
+    "performance": true,
+    "boilerplate_reduction": true,
+    "design_patterns": true,
+    "testing": true
+  },
+  "severity_thresholds": {
+    "critical": ["security", "bug"],
+    "warning": ["performance", "quality"],
+    "info": ["boilerplate", "design", "testing"]
+  },
+  "skip_patterns": [
+    "*.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "*.min.js",
+    "*.min.css",
+    "*.png",
+    "*.jpg",
+    "*.jpeg",
+    "*.gif",
+    "*.svg",
+    "*.ico",
+    "*.pdf",
+    "*.zip",
+    "dist/*",
+    "build/*",
+    "node_modules/*",
+    "__pycache__/*",
+    ".env*"
+  ],
+  "auto_comment": true,
+  "generate_summary": true,
+  "comment_style": "inline"
+}
+
