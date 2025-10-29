@@ -44,9 +44,7 @@ def process_data(data):
     for i in range(len(data)):
         for j in range(len(data)):
             if data[i] == data[j]:
-                results.append(data[i])
-    
-    return results
+                results.append(dat    return results
 
 
 class UserManager:
