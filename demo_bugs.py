@@ -5,7 +5,8 @@ Bug issues demo - Contains intentional bug issues
 
 def calculate_division(a, b):
     """Calculate division - missing error handling"""
-    # BUG: Will crash if b is 0
+    if b == 0:
+        return None
     return a / b
 
 def process_user_data(data):
