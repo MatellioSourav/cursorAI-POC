@@ -28,3 +28,5 @@ def hash_password(password):
     # SECURITY: MD5 is broken, should use bcrypt/argon2
     return hashlib.md5(password.encode()).hexdigest()
 
+
+

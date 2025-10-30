@@ -31,3 +31,5 @@ def get_user_profile(user_id):
     # BUG: Will crash if user is None
     return {"username": user[1], "email": user[3]}
 
+
+
