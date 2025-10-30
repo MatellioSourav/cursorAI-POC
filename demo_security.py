@@ -15,8 +15,10 @@ def authenticate_user(username, password):
     cursor = conn.cursor()
     
     # CRITICAL SECURITY: SQL Injection
-    query = f"SELECT * FROM users WHERE username = '{username}' AND password = '{password}'"
-    cursor.execute(query)
+    cursor.execute(
+        "SELECT * FROM users WHERE username = ? AND password = ?",
+        (username, password)
+    )
     
     user = cursor.fetchone()
     conn.close()
