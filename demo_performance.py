@@ -6,12 +6,14 @@ Performance issues demo - Contains intentional performance problems
 def find_duplicates_slow(data):
     """Find duplicates - O(n²) complexity"""
     # PERFORMANCE: Inefficient nested loops
-    duplicates = []
+    seen = set()
+    duplicates = set()
     for i in range(len(data)):
-        for j in range(i + 1, len(data)):
-            if data[i] == data[j]:
-                duplicates.append(data[i])
-    return duplicates
+        if data[i] in seen:
+            duplicates.add(data[i])
+        else:
+            seen.add(data[i])
+    return list(duplicates)
 
 def get_user_orders(user_id):
     """Get user orders - N+1 query problem"""
