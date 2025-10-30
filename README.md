@@ -398,3 +398,8 @@ If you encounter issues:
 
 *Saving your team lead hours of review time, one PR at a time!* ⏱️
 
+
+---
+
+Note: This README includes a minimal demo note to help trigger a clean diff for client demos. No functional behavior is affected.
+
