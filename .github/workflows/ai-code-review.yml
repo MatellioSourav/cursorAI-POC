@@ -3,11 +3,6 @@ name: AI Code Review
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    branches:
-      - main
-      - develop
-      - frontend
-      - backend
 jobs:
   ai-code-review:
     runs-on: ubuntu-latest
@@ -43,6 +38,12 @@ jobs:
           REPO_NAME: ${{ github.repository }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BRANCH_NAME: ${{ github.event.pull_request.head.ref }}
+          # JIRA Configuration (optional - set in repository secrets)
+          # Internal JIRA Webhook API
+          JIRA_API_BASE_URL: ${{ secrets.JIRA_API_BASE_URL }}
+          JIRA_PROJECT_ID: ${{ secrets.JIRA_PROJECT_ID }}
         run: |
           python .github/scripts/ai_code_reviewer.py
           
@@ -54,7 +55,26 @@ jobs:
             const fs = require('fs');
             if (fs.existsSync('review_summary.md')) {
               const summary = fs.readFileSync('review_summary.md', 'utf8');
-              github.rest.issues.createComment({
+              
+              // Delete previous summary comments to prevent email spam
+              const comments = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number
+              });
+              
+              for (const comment of comments.data) {
+                if (comment.body.includes('🤖 AI Code Review Summary')) {
+                  await github.rest.issues.deleteComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    comment_id: comment.id
+                  });
+                }
+              }
+              
+              // Post new summary comment
+              await github.rest.issues.createComment({
                 issue_number: context.issue.number,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
