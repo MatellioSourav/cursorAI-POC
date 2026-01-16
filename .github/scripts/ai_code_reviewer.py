@@ -65,19 +65,42 @@ class AICodeReviewer:
         cmd = f"git diff --name-status {self.base_sha} {self.head_sha}"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         
-        # Get files that were changed in commits with current JIRA key (if available)
+        # ROBUST: Get files from ALL commits that contain the JIRA key in their commit message
         files_from_jira_commits = set()
         if self.jira_key:
-            print(f"🔍 Filtering files from commits with JIRA key {self.jira_key}...")
-            # Get commits between base and head that contain the JIRA key in commit message
-            commit_cmd = f"git log {self.base_sha}..{self.head_sha} --pretty=format:%H --grep={self.jira_key} --all-match"
+            print(f"🔍 Searching for commits with JIRA key {self.jira_key}...")
+            
+            # Method 1: Use git log --grep (case-insensitive, flexible matching)
+            # This catches: "SEC-401: message", "message SEC-401", "fix SEC-401", etc.
+            commit_cmd = f"git log {self.base_sha}..{self.head_sha} --pretty=format:%H --grep={self.jira_key} -i"
             commit_result = subprocess.run(commit_cmd, shell=True, capture_output=True, text=True)
             
+            commit_hashes = []
             if commit_result.stdout.strip():
                 commit_hashes = commit_result.stdout.strip().split('\n')
-                print(f"📝 Found {len(commit_hashes)} commit(s) with JIRA key {self.jira_key}")
+            
+            # Method 2: Also check ALL commits and extract JIRA keys from each message
+            # This is more robust - catches any commit message format
+            all_commits_cmd = f"git log {self.base_sha}..{self.head_sha} --pretty=format:%H|%s"
+            all_commits_result = subprocess.run(all_commits_cmd, shell=True, capture_output=True, text=True)
+            
+            if all_commits_result.stdout.strip():
+                for line in all_commits_result.stdout.strip().split('\n'):
+                    if '|' in line:
+                        commit_hash, commit_msg = line.split('|', 1)
+                        # Check if this commit message contains the JIRA key (case-insensitive)
+                        if self.jira_key.upper() in commit_msg.upper():
+                            if commit_hash not in commit_hashes:
+                                commit_hashes.append(commit_hash)
+                                print(f"   📝 Found JIRA key in commit: {commit_hash[:7]} - {commit_msg[:50]}")
+            
+            # Remove duplicates
+            commit_hashes = list(dict.fromkeys(commit_hashes))
+            
+            if commit_hashes:
+                print(f"✅ Found {len(commit_hashes)} commit(s) with JIRA key {self.jira_key}")
                 
-                # Get files changed in those commits
+                # Get ALL files changed in those commits
                 for commit_hash in commit_hashes:
                     file_cmd = f"git diff-tree --no-commit-id --name-only -r {commit_hash}"
                     file_result = subprocess.run(file_cmd, shell=True, capture_output=True, text=True)
@@ -87,11 +110,12 @@ class AICodeReviewer:
                 
                 if files_from_jira_commits:
                     print(f"✅ Will review {len(files_from_jira_commits)} file(s) from commits with JIRA key {self.jira_key}")
+                    print(f"   Files: {', '.join(sorted(list(files_from_jira_commits))[:5])}{'...' if len(files_from_jira_commits) > 5 else ''}")
             else:
                 # If no commits found with JIRA key, check if branch name or PR title has it
                 # In that case, review all files (might be first commit without JIRA key in message)
-                print(f"⚠️  No commits found with JIRA key {self.jira_key} in commit message")
-                print(f"   Reviewing all files in PR (JIRA key found in branch/PR title)")
+                print(f"⚠️  No commits found with JIRA key {self.jira_key} in commit messages")
+                print(f"   JIRA key found in branch/PR title - will review all files in PR")
         
         file_diffs = []
         for line in result.stdout.strip().split('\n'):
@@ -109,15 +133,28 @@ class AICodeReviewer:
             if self._should_skip_file(filename):
                 continue
             
-            # If JIRA key is available, only review files from commits with that JIRA key
+            # ROBUST: If JIRA key is available, prioritize files from commits with that JIRA key
             if self.jira_key:
                 if files_from_jira_commits:
-                    # We have commits with JIRA key - only review files from those commits
-                    if filename not in files_from_jira_commits:
-                        print(f"⏭️  Skipping {filename} (not in commits with JIRA key {self.jira_key})")
-                        continue
+                    # We have commits with JIRA key - prioritize files from those commits
+                    if filename in files_from_jira_commits:
+                        # This file is from a commit with JIRA key - definitely review it
+                        print(f"✅ Including {filename} (from commit with JIRA key {self.jira_key})")
+                    else:
+                        # File not in commits with JIRA key - check if it's still related
+                        # Be permissive: if it's a code file in src/, include it (might be related)
+                        filename_lower_check = filename.lower()
+                        if filename_lower_check.startswith('src/') and any(
+                            pattern in filename_lower_check for pattern in ['controller', 'service', 'model', 'route', 'handler', 'manager', 'util', 'helper', 'middleware', 'component', 'module']
+                        ):
+                            print(f"✅ Including {filename} (code file in src/ - likely related to JIRA {self.jira_key})")
+                        elif self._is_file_related_to_jira_ticket(filename):
+                            print(f"✅ Including {filename} (related to JIRA ticket {self.jira_key})")
+                        else:
+                            print(f"⏭️  Skipping {filename} (not in commits with JIRA key {self.jira_key} and not related)")
+                            continue
                 else:
-                    # No commits found with JIRA key, but JIRA key exists in branch/PR
+                    # No commits found with JIRA key in commit messages, but JIRA key exists in branch/PR
                     # Use file relationship check, but be more permissive for src/ files
                     if not self._is_file_related_to_jira_ticket(filename):
                         # Double-check: if file is in src/ and is a code file, review it anyway (case-insensitive)
