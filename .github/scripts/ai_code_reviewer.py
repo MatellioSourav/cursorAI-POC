@@ -48,7 +48,8 @@ class AICodeReviewer:
         if not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
         
-        self.client = OpenAI(api_key=self.openai_api_key)
+        # Initialize OpenAI client with timeout (120 seconds for large prompts)
+        self.client = OpenAI(api_key=self.openai_api_key, timeout=120.0)
         self.review_comments: List[ReviewComment] = []
         
         # Initialize JIRA service
@@ -338,6 +339,7 @@ Be constructive, specific, and helpful. Focus on meaningful improvements."""
             if self.jira_issue:
                 system_message += " You are also an expert at evaluating code implementations against JIRA ticket requirements and acceptance criteria. You must strictly verify that code changes align with the specified requirements."
             
+            print(f"🤖 Calling OpenAI API for {file_diff.filename}...")
             response = self.client.chat.completions.create(
                 model="gpt-4o",  # Using GPT-4 Turbo (you can update to GPT-5 when available)
                 messages=[
@@ -345,8 +347,10 @@ Be constructive, specific, and helpful. Focus on meaningful improvements."""
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
-                response_format={"type": "json_object"}
+                response_format={"type": "json_object"},
+                timeout=120.0  # 2 minute timeout per file
             )
+            print(f"✅ OpenAI API response received for {file_diff.filename}")
             
             review_result = json.loads(response.choices[0].message.content)
             for issue in review_result.get('issues', []):
