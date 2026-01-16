@@ -79,7 +79,6 @@ Within 2 minutes of creating a PR, you should see:
 ## 📖 Full Documentation
 
 - **Complete Guide**: [README.md](README.md)
-- **Detailed Integration**: [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md)
 - **For Team Leads**: [TEAM_LEAD_GUIDE.md](TEAM_LEAD_GUIDE.md)
 
 ---

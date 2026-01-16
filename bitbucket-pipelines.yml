@@ -1,0 +1,190 @@
+image: maven:3.6.3-jdk-8
+
+definitions:
+  services:
+    docker:
+      memory: 3072
+
+pipelines:
+
+  ##########################################
+  #        PULL REQUESTS INTO QA           #
+  ##########################################
+  pull-requests:
+    '**':   # <-- Match ALL PRs (any source branch), then filter by destination
+      - step:
+          name: AI Code Review
+          image: python:3.11
+          caches:
+            - pip
+          script:
+            - |
+              echo "🔍 PR Source Branch: ${BITBUCKET_BRANCH}"
+              echo "🔍 PR Destination Branch: ${BITBUCKET_PR_DESTINATION_BRANCH}"
+
+              # CRITICAL: Bitbucket's pull-requests section matches SOURCE branch, not destination
+              # So we use '**' to catch all PRs, then filter by destination here
+              if [ "${BITBUCKET_PR_DESTINATION_BRANCH}" != "qa" ]; then
+                echo "⏭️  Skipping AI Code Review - PR does not target 'qa' branch"
+                echo "   (PR targets: ${BITBUCKET_PR_DESTINATION_BRANCH})"
+                exit 0
+              fi
+
+              echo "✅ PR targeting 'qa' branch detected — running AI Review..."
+
+            - echo "🚀 Starting AI Code Review Pipeline..."
+            - echo "📋 Environment Check:"
+            - |
+              echo "  - BITBUCKET_PR_ID: ${BITBUCKET_PR_ID:-NOT SET}"
+              echo "  - BITBUCKET_PR_DESTINATION_BRANCH: ${BITBUCKET_PR_DESTINATION_BRANCH:-NOT SET}"
+              echo "  - BITBUCKET_BRANCH: ${BITBUCKET_BRANCH:-NOT SET}"
+              echo "  - BITBUCKET_WORKSPACE: ${BITBUCKET_WORKSPACE:-NOT SET}"
+              echo "  - BITBUCKET_REPO_SLUG: ${BITBUCKET_REPO_SLUG:-NOT SET}"
+              if [ -n "$OPENAI_API_KEY" ]; then
+                echo "  - OPENAI_API_KEY: SET (hidden)"
+              else
+                echo "  - OPENAI_API_KEY: NOT SET ❌"
+              fi
+              if [ -n "$BITBUCKET_USERNAME" ]; then
+                echo "  - BITBUCKET_USERNAME: ${BITBUCKET_USERNAME}"
+              else
+                echo "  - BITBUCKET_USERNAME: NOT SET"
+              fi
+              if [ -n "$BITBUCKET_APP_PASSWORD" ]; then
+                echo "  - BITBUCKET_APP_PASSWORD: SET (hidden)"
+              else
+                echo "  - BITBUCKET_APP_PASSWORD: NOT SET ❌"
+              fi
+              echo "  - BITBUCKET_PR_DESTINATION_COMMIT: ${BITBUCKET_PR_DESTINATION_COMMIT:-NOT SET}"
+              echo "  - BITBUCKET_COMMIT: ${BITBUCKET_COMMIT:-NOT SET}"
+              # JIRA Configuration (optional - set in repository variables)
+              if [ -n "$JIRA_API_BASE_URL" ]; then
+                echo "  - JIRA_API_BASE_URL: SET (hidden)"
+              else
+                echo "  - JIRA_API_BASE_URL: NOT SET (using default: http://hrm.matellio.com/api/jira)"
+              fi
+              if [ -n "$JIRA_PROJECT_ID" ]; then
+                echo "  - JIRA_PROJECT_ID: SET (hidden)"
+              else
+                echo "  - JIRA_PROJECT_ID: NOT SET (JIRA integration disabled)"
+              fi
+              echo " "
+
+            - echo "📁 Checking required files..."
+            - |
+              if [ ! -f ".bitbucket/scripts/ai_code_reviewer_bitbucket.py" ]; then
+                echo "❌ ERROR: ai_code_reviewer_bitbucket.py not found!"
+                exit 1
+              fi
+              if [ ! -f ".bitbucket/scripts/post_summary_bitbucket.py" ]; then
+                echo "❌ ERROR: post_summary_bitbucket.py not found!"
+                exit 1
+              fi
+              if [ ! -f ".bitbucket/scripts/requirements.txt" ]; then
+                echo "❌ ERROR: requirements.txt not found!"
+                exit 1
+              fi
+              echo "✅ All required files found"
+
+            - echo "🔧 Installing dependencies..."
+            - apt-get update && apt-get install -y git || true
+            - pip install --upgrade pip
+            - pip install -r .bitbucket/scripts/requirements.txt
+
+            - echo "🔍 Git configuration check..."
+            - |
+              echo "  - Git version: $(git --version)"
+              echo "  - Current branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'N/A')"
+              echo "  - Current commit: $(git rev-parse HEAD 2>/dev/null || echo 'N/A')"
+              echo "  - Base commit: ${BITBUCKET_PR_DESTINATION_COMMIT:-NOT SET}"
+              echo "  - Head commit: ${BITBUCKET_COMMIT:-NOT SET}"
+              echo "  - Fetching full git history..."
+              git fetch --unshallow || git fetch origin || echo "⚠️  Git fetch warning (may be shallow clone)"
+              echo "✅ Git configured"
+
+            - echo "🤖 Running AI Code Reviewer..."
+            - |
+              export JIRA_API_BASE_URL="${JIRA_API_BASE_URL:-http://hrm.matellio.com/api/jira}"
+              export JIRA_PROJECT_ID="${JIRA_PROJECT_ID:-}"
+              python .bitbucket/scripts/ai_code_reviewer_bitbucket.py || {
+                echo "❌ AI Code Reviewer failed!"
+                exit 1
+              }
+
+          after-script:
+            - |
+              if [ -f review_summary.md ]; then
+                echo "📝 Posting review summary..."
+                python .bitbucket/scripts/post_summary_bitbucket.py || true
+              else
+                echo "ℹ️  No summary file found. Skipping."
+              fi
+
+
+  ##########################################
+  #      CUSTOM PIPELINES                  #
+  ##########################################
+  custom:
+    deploy-to-qa:
+      - step:
+          name: Code Analysis with SonarQube
+          size: 2x
+          services:
+            - docker
+          script:
+            - pipe: sonarsource/sonarqube-scan:1.0.0
+              variables:
+                SONAR_HOST_URL: 'http://184.72.21.76:9000'
+                SONAR_TOKEN: ${SONAR_TOKEN}
+                EXTRA_ARGS: |
+                  -Dsonar.sourceEncoding=UTF-8
+                  -Dsonar.projectKey=hart-new
+                  -Dsonar.scanner.force-deprecated-java=true
+                  -Dsonar.cpd.exclusions=**/*.php
+                  -Dsonar.exclusions=**/*.log,**/*.json,config/Migrations/**,webroot/js/**,webroot/css/**,bin/cake.php,src/Console/Installer.php,src/Utility/CookiesEncryptionTrait.php,tests/**,src/Controller/Admin/TemplatesController.php
+
+      - step:
+          name: Check SonarQube Quality Gate
+          size: 2x
+          script:
+            - pipe: sonarsource/sonarqube-quality-gate:1.1.0
+              variables:
+                SONAR_TOKEN: ${SONAR_TOKEN}
+
+      - step:
+          name: "Build and Test on qa.forseti.io"
+          script:
+            - echo "Building and testing for qa..."
+            - sed -i 's|http://deb.debian.org|http://archive.debian.org|g' /etc/apt/sources.list
+            - sed -i 's|http://security.debian.org|http://archive.debian.org|g' /etc/apt/sources.list
+            - echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until
+            - apt-get update && apt-get install -y zip
+            - zip -r application.zip * .[^.]*
+            - pipe: atlassian/aws-elasticbeanstalk-deploy:1.4.0
+              variables:
+                AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID_1
+                AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY_1
+                AWS_DEFAULT_REGION: 'us-gov-east-1'
+                APPLICATION_NAME: 'qa'
+                COMMAND: 'upload-only'
+                ZIP_FILE: 'application.zip'
+                S3_BUCKET: 'nc-hart-staging-elasticbeanstalk-deployment'
+                VERSION_LABEL: 'deployApi-$BITBUCKET_BUILD_NUMBER-multiple'
+          artifacts:
+            - application.zip
+
+      - step:
+          name: "Deploy to qa.forseti.io"
+          deployment: staging
+          script:
+            - echo "Deploying to test environment..."
+            - pipe: atlassian/aws-elasticbeanstalk-deploy:1.4.0
+              variables:
+                AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+                AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+                AWS_DEFAULT_REGION: us-gov-east-1
+                APPLICATION_NAME: 'qa'
+                COMMAND: 'deploy-only'
+                VERSION_LABEL: 'deployApi-$BITBUCKET_BUILD_NUMBER-multiple'
+                ENVIRONMENT_NAME: 'Qa-env'
+                WAIT: 'true'
