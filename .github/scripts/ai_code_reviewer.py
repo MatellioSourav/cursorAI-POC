@@ -120,9 +120,10 @@ class AICodeReviewer:
                     # No commits found with JIRA key, but JIRA key exists in branch/PR
                     # Use file relationship check, but be more permissive for src/ files
                     if not self._is_file_related_to_jira_ticket(filename):
-                        # Double-check: if file is in src/ and is a code file, review it anyway
-                        if filename.startswith('src/') and any(
-                            pattern in filename for pattern in ['Controller', 'Service', 'Model', 'Route', 'Handler']
+                        # Double-check: if file is in src/ and is a code file, review it anyway (case-insensitive)
+                        filename_lower_check = filename.lower()
+                        if filename_lower_check.startswith('src/') and any(
+                            pattern in filename_lower_check for pattern in ['controller', 'service', 'model', 'route', 'handler', 'manager', 'util', 'helper', 'middleware', 'component', 'module']
                         ):
                             print(f"✅ Including {filename} (code file in src/ for JIRA {self.jira_key})")
                         else:
@@ -230,7 +231,6 @@ class AICodeReviewer:
         
         # UNIVERSAL: Dynamically extract meaningful keywords from JIRA ticket
         # Extract nouns and important words (skip common stop words)
-        import re
         stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can', 'this', 'that', 'these', 'those', 'add', 'create', 'implement', 'update', 'fix', 'remove', 'delete', 'change', 'modify', 'improve', 'enhance', 'feature', 'system', 'user', 'api', 'endpoint', 'function', 'functionality'}
         
         # Extract words (3+ characters, alphanumeric)
@@ -289,7 +289,6 @@ class AICodeReviewer:
         combined_text = (jira_summary + ' ' + jira_description).lower()
         
         # UNIVERSAL: Dynamically extract keywords from JIRA ticket (no hardcoded feature names)
-        import re
         stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can', 'this', 'that', 'these', 'those', 'add', 'create', 'implement', 'update', 'fix', 'remove', 'delete', 'change', 'modify', 'improve', 'enhance', 'feature', 'system', 'user', 'api', 'endpoint', 'function', 'functionality'}
         
         # Extract meaningful keywords from ticket
