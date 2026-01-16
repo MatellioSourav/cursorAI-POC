@@ -339,7 +339,6 @@ Be constructive, specific, and helpful. Focus on meaningful improvements."""
             if self.jira_issue:
                 system_message += " You are also an expert at evaluating code implementations against JIRA ticket requirements and acceptance criteria. You must strictly verify that code changes align with the specified requirements."
             
-            print(f"🤖 Calling OpenAI API for {file_diff.filename}...")
             response = self.client.chat.completions.create(
                 model="gpt-4o",  # Using GPT-4 Turbo (you can update to GPT-5 when available)
                 messages=[
@@ -347,10 +346,8 @@ Be constructive, specific, and helpful. Focus on meaningful improvements."""
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
-                response_format={"type": "json_object"},
-                timeout=120.0  # 2 minute timeout per file
+                response_format={"type": "json_object"}
             )
-            print(f"✅ OpenAI API response received for {file_diff.filename}")
             
             review_result = json.loads(response.choices[0].message.content)
             for issue in review_result.get('issues', []):
@@ -601,16 +598,38 @@ Be constructive, specific, and helpful. Focus on meaningful improvements."""
             
             # Get all issues for review body
             all_issues = []
-            for _, review in file_reviews:
+            out_of_scope_files = set()
+            for file_diff, review in file_reviews:
                 if review:
                     all_issues.extend(review.get('issues', []))
+                    # Collect out-of-scope files from jira_compliance
+                    jira_compliance = review.get('jira_compliance', {})
+                    out_of_scope = jira_compliance.get('out_of_scope_files', [])
+                    if out_of_scope:
+                        out_of_scope_files.update(out_of_scope)
             
-            critical_issues = [i for i in all_issues if i.get('severity') == 'error' and i.get('category') in ['requirement', 'scope']]
+            # Filter critical issues (exclude duplicate out-of-scope messages)
+            critical_issues = []
+            seen_titles = set()
+            for issue in all_issues:
+                if issue.get('severity') == 'error' and issue.get('category') in ['requirement', 'scope']:
+                    title = issue.get('title', '')
+                    # Deduplicate: skip if we've seen this title before
+                    if title not in seen_titles:
+                        seen_titles.add(title)
+                        critical_issues.append(issue)
             
             review_body = "## ⚠️ Changes Requested\n\n"
             review_body += "This PR does not fully meet the JIRA ticket requirements:\n\n"
             
-            for issue in critical_issues[:5]:  # Limit to 5 issues
+            # Add out-of-scope files section if any
+            if out_of_scope_files:
+                review_body += f"**Out-of-scope files detected:** {len(out_of_scope_files)} file(s) appear unrelated to the JIRA ticket.\n"
+                review_body += "Please ensure all changes are relevant to the ticket requirements.\n\n"
+            
+            # Add other critical issues (limit to 3 to avoid repetition)
+            other_issues = [i for i in critical_issues if 'out-of-scope' not in i.get('title', '').lower()][:3]
+            for issue in other_issues:
                 review_body += f"- **{issue.get('title')}**: {issue.get('description', '')[:200]}\n"
             
             review_data = {
@@ -683,7 +702,14 @@ Be constructive, specific, and helpful. Focus on meaningful improvements."""
         if self.jira_issue:
             summary += "## 📋 JIRA Compliance Check\n\n"
             
+            # Collect all compliance data across all files (deduplicate)
             all_compliant = True
+            all_missing = set()
+            all_out_of_scope = set()
+            all_checklists = []
+            all_subtask_coverage = []
+            final_verdict = None
+            
             for _, review in file_reviews:
                 if not review:
                     continue
@@ -694,56 +720,78 @@ Be constructive, specific, and helpful. Focus on meaningful improvements."""
                 out_of_scope = jira_compliance.get('out_of_scope_files', [])
                 checklist = jira_compliance.get('acceptance_criteria_checklist', [])
                 subtask_coverage = jira_compliance.get('subtask_coverage', [])
-                final_verdict = jira_compliance.get('final_verdict', '')
+                verdict = jira_compliance.get('final_verdict', '')
                 
                 if not matches or missing or out_of_scope:
                     all_compliant = False
+                
+                # Collect unique missing criteria
+                if missing:
+                    all_missing.update(missing)
+                
+                # Collect unique out-of-scope files
+                if out_of_scope:
+                    all_out_of_scope.update(out_of_scope)
+                
+                # Collect checklists (use first non-empty one, or merge)
+                if checklist and not all_checklists:
+                    all_checklists = checklist
+                
+                # Collect subtask coverage (use first non-empty one, or merge)
+                if subtask_coverage and not all_subtask_coverage:
+                    all_subtask_coverage = subtask_coverage
+                
+                # Use first final verdict found
+                if verdict and not final_verdict:
+                    final_verdict = verdict
                 
                 # Check subtask coverage
                 if subtask_coverage:
                     missing_subtasks = [st for st in subtask_coverage if 'missing' in st.get('status', '').lower()]
                     if missing_subtasks:
                         all_compliant = False
-                
-                # Final verdict section
-                if final_verdict:
-                    verdict_emoji = "✅" if "approve" in final_verdict.lower() else "❌"
-                    summary += f"### 🔚 Final Verdict\n\n"
-                    summary += f"{verdict_emoji} **{final_verdict}**\n\n"
-                
-                # Acceptance Criteria Checklist
-                if checklist:
-                    summary += "### 📋 Acceptance Criteria Checklist\n\n"
-                    for item in checklist:
-                        summary += f"{item.get('status', '❓')} {item.get('criteria', 'N/A')}\n"
-                        if item.get('evidence'):
-                            summary += f"   *Evidence: {item.get('evidence')}*\n"
-                    summary += "\n"
-                
-                # Subtask Coverage
-                if subtask_coverage:
-                    summary += "### 🧾 Subtask Coverage\n\n"
-                    for subtask in subtask_coverage:
-                        subtask_key = subtask.get('subtask_key', 'N/A')
-                        subtask_status = subtask.get('status', '❓')
-                        subtask_evidence = subtask.get('evidence', '')
-                        summary += f"{subtask_status} **{subtask_key}**\n"
-                        if subtask_evidence:
-                            summary += f"   *Evidence: {subtask_evidence}*\n"
-                    summary += "\n"
-                
-                if missing:
-                    summary += "### ❌ Missing Acceptance Criteria\n\n"
-                    for criteria in missing:
-                        summary += f"- {criteria}\n"
-                    summary += "\n"
-                
-                if out_of_scope:
-                    summary += "### ⚠️ Out-of-Scope Files\n\n"
-                    summary += "The following files appear unrelated to JIRA ticket requirements:\n\n"
-                    for file in out_of_scope:
-                        summary += f"- `{file}`\n"
-                    summary += "\n"
+            
+            # Final verdict section
+            if final_verdict:
+                verdict_emoji = "✅" if "approve" in final_verdict.lower() else "❌"
+                summary += f"### 🔚 Final Verdict\n\n"
+                summary += f"{verdict_emoji} **{final_verdict}**\n\n"
+            
+            # Acceptance Criteria Checklist
+            if all_checklists:
+                summary += "### 📋 Acceptance Criteria Checklist\n\n"
+                for item in all_checklists:
+                    summary += f"{item.get('status', '❓')} {item.get('criteria', 'N/A')}\n"
+                    if item.get('evidence'):
+                        summary += f"   *Evidence: {item.get('evidence')}*\n"
+                summary += "\n"
+            
+            # Subtask Coverage
+            if all_subtask_coverage:
+                summary += "### 🧾 Subtask Coverage\n\n"
+                for subtask in all_subtask_coverage:
+                    subtask_key = subtask.get('subtask_key', 'N/A')
+                    subtask_status = subtask.get('status', '❓')
+                    subtask_evidence = subtask.get('evidence', '')
+                    summary += f"{subtask_status} **{subtask_key}**\n"
+                    if subtask_evidence:
+                        summary += f"   *Evidence: {subtask_evidence}*\n"
+                summary += "\n"
+            
+            # Missing Acceptance Criteria (deduplicated)
+            if all_missing:
+                summary += "### ❌ Missing Acceptance Criteria\n\n"
+                for criteria in sorted(all_missing):
+                    summary += f"- {criteria}\n"
+                summary += "\n"
+            
+            # Out-of-Scope Files (deduplicated)
+            if all_out_of_scope:
+                summary += "### ⚠️ Out-of-Scope Files\n\n"
+                summary += f"The following {len(all_out_of_scope)} file(s) appear unrelated to JIRA ticket requirements:\n\n"
+                for file in sorted(all_out_of_scope):
+                    summary += f"- `{file}`\n"
+                summary += "\n"
             
             if all_compliant:
                 summary += "✅ **All JIRA requirements appear to be met!**\n\n"
