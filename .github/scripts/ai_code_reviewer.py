@@ -118,11 +118,16 @@ class AICodeReviewer:
                         continue
                 else:
                     # No commits found with JIRA key, but JIRA key exists in branch/PR
-                    # Only review files that match the JIRA ticket context
-                    # For SEC-400 (payment), only review payment-related files
+                    # Use file relationship check, but be more permissive for src/ files
                     if not self._is_file_related_to_jira_ticket(filename):
-                        print(f"⏭️  Skipping {filename} (not related to JIRA ticket {self.jira_key})")
-                        continue
+                        # Double-check: if file is in src/ and is a code file, review it anyway
+                        if filename.startswith('src/') and any(
+                            pattern in filename for pattern in ['Controller', 'Service', 'Model', 'Route', 'Handler']
+                        ):
+                            print(f"✅ Including {filename} (code file in src/ for JIRA {self.jira_key})")
+                        else:
+                            print(f"⏭️  Skipping {filename} (not related to JIRA ticket {self.jira_key})")
+                            continue
             
             # Get the diff for this file
             diff_cmd = f"git diff {self.base_sha} {self.head_sha} -- {filename}"
@@ -211,8 +216,9 @@ class AICodeReviewer:
     
     def _is_file_related_to_jira_ticket(self, filename: str) -> bool:
         """
-        Check if a file is related to the current JIRA ticket based on ticket summary/description
-        This is a fallback when commit-based filtering doesn't work
+        UNIVERSAL: Check if a file is related to the current JIRA ticket based on ticket summary/description.
+        Dynamically extracts keywords from JIRA ticket (no hardcoded feature names).
+        This is a fallback when commit-based filtering doesn't work.
         """
         if not self.jira_issue:
             return True  # If no JIRA ticket, review all files
@@ -220,49 +226,79 @@ class AICodeReviewer:
         jira_summary = self.jira_issue.get('summary', '').lower()
         jira_description = self.jira_issue.get('description', '').lower()
         filename_lower = filename.lower()
+        combined_text = (jira_summary + ' ' + jira_description).lower()
         
-        # Extract keywords from JIRA ticket
-        keywords = []
-        if 'payment' in jira_summary or 'payment' in jira_description:
-            keywords.extend(['payment', 'pay', 'transaction', 'refund', 'billing'])
-        if 'login' in jira_summary or 'authentication' in jira_summary or 'auth' in jira_summary:
-            keywords.extend(['login', 'auth', 'authentication', 'session', 'token'])
-        if 'profile' in jira_summary or 'user profile' in jira_summary:
-            keywords.extend(['profile', 'user'])
+        # UNIVERSAL: Dynamically extract meaningful keywords from JIRA ticket
+        # Extract nouns and important words (skip common stop words)
+        import re
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can', 'this', 'that', 'these', 'those', 'add', 'create', 'implement', 'update', 'fix', 'remove', 'delete', 'change', 'modify', 'improve', 'enhance', 'feature', 'system', 'user', 'api', 'endpoint', 'function', 'functionality'}
         
-        # Check if filename contains any relevant keywords
+        # Extract words (3+ characters, alphanumeric)
+        words = re.findall(r'\b[a-z]{3,}\b', combined_text)
+        keywords = [w for w in words if w not in stop_words]
+        
+        # Also extract common technical terms and domain-specific words
+        # Look for patterns like "user login", "payment processing", "order management"
+        # Extract compound terms (2-word phrases)
+        phrases = re.findall(r'\b([a-z]+)\s+([a-z]+)\b', combined_text)
+        for word1, word2 in phrases:
+            if word1 not in stop_words and word2 not in stop_words:
+                keywords.extend([word1, word2, word1 + word2])
+        
+        # Remove duplicates while preserving order
+        keywords = list(dict.fromkeys(keywords))
+        
+        # Generic: If file is in src/ and is a code file (controller, service, model, etc.), assume it's related
+        # This is UNIVERSAL - works for any feature/domain
+        if filename_lower.startswith('src/') and any(
+            pattern in filename_lower for pattern in ['controller', 'service', 'model', 'route', 'handler', 'manager', 'util', 'helper', 'middleware', 'component', 'module']
+        ):
+            # If it's a code file in src/ and we have a JIRA ticket, it's likely related
+            # Only skip if we're very sure it's not related (e.g., demo/test files)
+            if any(pattern in filename_lower for pattern in ['demo', 'test', 'example', 'sample', 'mock', 'stub']):
+                return False
+            # Otherwise, assume it's related to the ticket
+            return True
+        
+        # Check if filename contains any extracted keywords
         if keywords:
-            if any(keyword in filename_lower for keyword in keywords):
-                return True
-            # If no keywords match, it's probably not related
-            return False
+            # Check for exact keyword matches or partial matches
+            for keyword in keywords:
+                if keyword in filename_lower or filename_lower.replace('_', '').replace('-', '').replace('.', '').find(keyword) != -1:
+                    return True
         
-        # If we can't determine, be conservative and review it
-        return True
+        # If file is in src/ directory, be conservative and review it
+        # (It's likely part of the feature being implemented)
+        if filename_lower.startswith('src/'):
+            return True
+        
+        # Files outside src/ are probably not related (configs, docs, etc.)
+        return False
     
     def _filter_out_of_scope_files(self, out_of_scope_files: set) -> set:
         """
-        Filter out files that are actually in scope based on JIRA ticket context.
-        This prevents false positives where authentication-related files are flagged as out-of-scope.
+        UNIVERSAL: Filter out files that are actually in scope based on JIRA ticket context.
+        Dynamically extracts keywords from ticket (no hardcoded feature names).
+        This prevents false positives where feature-related files are flagged as out-of-scope.
         """
         if not self.jira_issue:
             return out_of_scope_files
         
         jira_summary = self.jira_issue.get('summary', '').lower()
         jira_description = self.jira_issue.get('description', '').lower()
+        combined_text = (jira_summary + ' ' + jira_description).lower()
         
-        # Check if ticket is about authentication/login
-        auth_keywords = ['login', 'authentication', 'auth', 'session', 'token', 'password', 'user login']
-        is_auth_ticket = any(keyword in jira_summary or keyword in jira_description for keyword in auth_keywords)
+        # UNIVERSAL: Dynamically extract keywords from JIRA ticket (no hardcoded feature names)
+        import re
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can', 'this', 'that', 'these', 'those', 'add', 'create', 'implement', 'update', 'fix', 'remove', 'delete', 'change', 'modify', 'improve', 'enhance', 'feature', 'system', 'user', 'api', 'endpoint', 'function', 'functionality'}
         
-        if not is_auth_ticket:
-            return out_of_scope_files
+        # Extract meaningful keywords from ticket
+        words = re.findall(r'\b[a-z]{3,}\b', combined_text)
+        ticket_keywords = [w for w in words if w not in stop_words]
         
-        # Files that are clearly in scope for authentication tickets
-        in_scope_patterns = [
-            'login', 'auth', 'authentication', 'session', 'token', 'password',
-            'middleware', 'service', 'controller', 'route', 'model'
-        ]
+        # Files that are clearly in scope (universal patterns)
+        in_scope_patterns = ['middleware', 'service', 'controller', 'route', 'model', 'handler', 'manager', 'util', 'helper', 'component', 'module']
+        in_scope_patterns.extend(ticket_keywords)  # Add ticket-specific keywords
         
         # Files that are clearly out of scope (CI/CD, docs, demos)
         always_out_of_scope = [
@@ -280,7 +316,7 @@ class AICodeReviewer:
             # Always include files that are clearly out of scope
             if any(pattern in file_lower for pattern in always_out_of_scope):
                 filtered.add(file)
-            # Exclude files that match in-scope patterns for auth tickets
+            # Exclude files that match in-scope patterns (universal - works for any ticket type)
             elif any(pattern in file_lower for pattern in in_scope_patterns):
                 # This file is likely in scope, don't include it
                 continue
@@ -404,8 +440,8 @@ class AICodeReviewer:
 2. **Scope Validation**:
    - Review if ALL changed files are relevant to JIRA ticket {self.jira_key}
    - **IMPORTANT**: Files related to the ticket topic ARE IN SCOPE. For example:
-     * For login/authentication tickets: controllers, services, middleware, routes, models, utils related to auth ARE IN SCOPE
-     * Files with names containing: login, auth, authentication, session, token, password, user (when related to auth) ARE IN SCOPE
+     * Files in src/ directory that are controllers, services, middleware, routes, models, utils, handlers, or managers related to the ticket topic ARE IN SCOPE
+     * Files with names containing keywords from the JIRA ticket summary/description ARE IN SCOPE
      * Only flag files as out-of-scope if they are clearly unrelated (e.g., documentation updates, CI/CD configs, demo files, unrelated features)
    - Flag any files that seem completely unrelated to the ticket requirements
    - Ensure no accidental changes to unrelated functionality
@@ -846,10 +882,11 @@ Format your response as JSON with the following structure:
 
 **IMPORTANT:**
 - If acceptance criteria are missing or violated, mark severity as "error" and set final_verdict to "Changes Requested"
-- **SCOPE DETECTION RULES**: 
-  * For authentication/login tickets: Files in paths like `src/controllers/*login*`, `src/services/*auth*`, `src/middleware/*auth*`, `src/routes/*auth*` ARE IN SCOPE
+- **SCOPE DETECTION RULES (UNIVERSAL)**: 
+  * Files in `src/` directory that match keywords from JIRA ticket summary/description ARE IN SCOPE
+  * Files with names containing keywords from the ticket (controllers, services, middleware, routes, models, handlers, managers) ARE IN SCOPE
   * Only flag files as out-of-scope if they are clearly unrelated (CI/CD configs, documentation, demo files, unrelated features)
-  * DO NOT flag authentication-related code files as out-of-scope for authentication tickets
+  * DO NOT flag code files in src/ as out-of-scope if they relate to the ticket topic
 - If files are out of scope, create issues with category "scope"
 - If subtasks are not covered, mark them as "❌ Missing" in subtask_coverage
 - Be specific about which acceptance criteria are met/missing
