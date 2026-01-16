@@ -849,19 +849,19 @@ Be constructive, specific, and helpful. Focus on meaningful improvements."""
             
             # Out-of-Scope Files (deduplicated and filtered)
             if all_out_of_scope:
-            # Filter out files that are clearly related to the JIRA ticket
-            filtered_out_of_scope = self._filter_out_of_scope_files(all_out_of_scope)
-            
-            if filtered_out_of_scope:
-                summary += "### ⚠️ Out-of-Scope Files\n\n"
-                summary += f"The following {len(filtered_out_of_scope)} file(s) appear unrelated to JIRA ticket requirements:\n\n"
-                for file in sorted(filtered_out_of_scope):
-                    summary += f"- `{file}`\n"
-                summary += "\n"
-            elif all_out_of_scope:
-                # If we filtered out all files, mention that authentication-related files are in scope
-                summary += "### ℹ️ Scope Note\n\n"
-                summary += "All changed files appear to be related to the JIRA ticket requirements.\n\n"
+                # Filter out files that are clearly related to the JIRA ticket
+                filtered_out_of_scope = self._filter_out_of_scope_files(all_out_of_scope)
+                
+                if filtered_out_of_scope:
+                    summary += "### ⚠️ Out-of-Scope Files\n\n"
+                    summary += f"The following {len(filtered_out_of_scope)} file(s) appear unrelated to JIRA ticket requirements:\n\n"
+                    for file in sorted(filtered_out_of_scope):
+                        summary += f"- `{file}`\n"
+                    summary += "\n"
+                else:
+                    # If we filtered out all files, mention that authentication-related files are in scope
+                    summary += "### ℹ️ Scope Note\n\n"
+                    summary += "All changed files appear to be related to the JIRA ticket requirements.\n\n"
             
             if all_compliant:
                 summary += "✅ **All JIRA requirements appear to be met!**\n\n"
