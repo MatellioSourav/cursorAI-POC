@@ -459,10 +459,131 @@ Please provide a detailed code review focusing on:
 6. **Code Quality**: Best practices, clean code principles, maintainability
 7. **Potential Bugs**: Logic errors, edge cases, null pointer issues
 8. **Security**: Vulnerabilities, injection risks, authentication/authorization issues
-9. **Performance**: Inefficient algorithms, unnecessary operations, optimization opportunities
-10. **Boilerplate Reduction**: Identify repetitive code that can be abstracted or simplified
+   - **CRITICAL**: Check for insecure defaults (e.g., public endpoints without authentication)
+   - Flag crypto misuse: weak hashing algorithms (MD5, SHA1), incorrect encryption usage
+   - Verify proper use of cryptographic libraries and algorithms
+   - Check for command injection patterns (exec, eval, system calls with user input)
+   - Flag XSS vulnerabilities in dynamic content rendering
+   - Verify proper input encoding/escaping
+9. **Performance & Scalability**:
+   - **CRITICAL**: Flag unbounded loops or recursion risks (missing termination conditions)
+   - Check for inefficient data structures (using array when Set/Map needed, etc.)
+   - Flag repeated expensive calls (DB, API, filesystem) that could be cached
+   - Identify missing caching opportunities for frequently accessed data
+   - Flag large object creation inside loops (should be created outside)
+   - Check for memory-intensive operations in loops
+   - Verify proper use of pagination for large datasets
+10. **Code Duplication & Reusability**:
+   - **CRITICAL**: Flag duplicated code that should be extracted into reusable components/services
+   - React: Flag duplicated components, hooks, or utility functions that should be shared
+   - Backend: Flag duplicated API logic across controllers/services (extract to shared services)
+   - Flag repeated database query patterns (extract to query helpers/utilities)
+   - Suggest creating shared components/services/utilities for repeated code
+   - Check for opportunities to use design patterns (Factory, Strategy, etc.) to reduce duplication
 11. **Design Patterns**: Suggest better architectural patterns if applicable
 12. **Testing**: Missing test cases or testability issues
+
+**FRONTEND & BACKEND BEST PRACTICES (SME CHECKLIST):**
+
+29. **Unused Code & Imports**:
+   - **CRITICAL**: Flag unused variables, imports, and dead code
+   - React: Flag unused useState, useEffect, props, and imports
+   - Flag unnecessary state when values can be computed/derived
+   - Clean up unused dependencies in effect hooks
+   - Backend: Flag unused variables, imports, and unused ORM models/relationships
+   - Remove unused functions, classes, and modules
+   - Flag unused parameters in function signatures
+
+30. **Commented-Out Code**:
+   - **CRITICAL**: Never commit commented-out code
+   - Flag commented JSX, API logic, SQL queries, or any commented code blocks
+   - Suggest using Git history or feature flags instead of commented code
+   - Remove commented debugging code, TODO comments with old code, or experimental code
+
+31. **Hard-Coded Values & Configuration**:
+   - **CRITICAL**: Move all hard-coded values to config/environment files
+   - Flag hard-coded API URLs, endpoints, or service URLs (should be in config)
+   - Flag hard-coded constants, magic numbers, or feature flags (should be configurable)
+   - Flag hard-coded environment-specific values (dev/staging/prod URLs)
+   - Enforce use of environment variables (.env files) or configuration modules
+   - Never allow hard-coded secrets, tokens, or database credentials (covered in secrets check)
+
+32. **Method/Function Signature Quality**:
+   - React: Verify components have clear, well-named props
+   - Flag components with excessive props (suggest using objects/context)
+   - Backend: Verify API endpoints have explicit request/response schemas
+   - Flag missing request payload validation (should use DTOs/Pydantic models)
+   - Ensure return types are predictable and consistent
+   - Flag functions with unclear parameter names or too many parameters
+   - Verify function signatures are self-documenting
+
+33. **Semantic Logic & Business Rules**:
+   - **CRITICAL**: Ensure UI logic reflects backend business rules
+   - Flag business logic embedded directly in React components (should be in backend/services)
+   - Verify validation and business rules are centralized in backend services
+   - Check conditional logic is readable and intention-revealing
+   - Flag complex business logic in frontend that should be server-side
+   - Ensure business rules are consistent between frontend and backend
+
+34. **Performance - Loops, Rendering, and Database**:
+   - **CRITICAL**: Optimize loops, rendering, and database calls
+   - React Performance:
+     * Flag unnecessary re-renders (check dependency arrays in useEffect/useMemo/useCallback)
+     * Flag missing memoization where expensive computations occur
+     * Flag loops inside render that perform heavy logic
+     * Verify useMemo/useCallback are used appropriately (not overused)
+   - Database Performance:
+     * **CRITICAL**: Flag database queries inside for loops (use bulk operations instead)
+     * Prefer bulk inserts, joins, IN queries, and set-based operations
+     * Flag N+1 query problems (use eager loading or batch queries)
+     * Verify indexes exist for frequently filtered columns
+     * Flag sequential await calls in loops when parallel execution is safe
+     * Check for missing database query optimization
+
+35. **Promises & Async Handling**:
+   - **CRITICAL**: Proper async/await and promise handling
+   - Node.js:
+     * Flag wrapping synchronous logic inside new Promise() (unnecessary)
+     * Use async/await consistently (avoid mixing with .then())
+     * Flag sequential await calls in loops when parallel execution is safe (use Promise.all)
+     * Always handle Promise rejections (missing .catch() or try/catch)
+     * Flag unhandled promise rejections
+   - FastAPI/Python:
+     * Use async endpoints only when I/O-bound operations exist
+     * Flag blocking calls inside async routes
+     * Ensure DB sessions are properly closed or scoped
+     * Verify proper async context management
+
+36. **Code Formatting & Indentation**:
+   - React: Maintain consistent JSX indentation and component structure
+   - Flag deeply nested JSX (suggest breaking into smaller components)
+   - Backend: Follow language-specific formatting standards
+   - Ensure consistent indentation for conditionals, loops, and transactions
+   - Flag inconsistent spacing, bracket placement, or indentation
+
+37. **Security - Frontend & Backend**:
+   - Frontend Security:
+     * **CRITICAL**: Never trust client-side validation alone (always validate server-side)
+     * Flag sensitive values exposed in browser logs, console.log, or source code
+     * Verify proper input sanitization before rendering
+     * Check for XSS vulnerabilities in dynamic content rendering
+   - Backend Security (enhanced):
+     * Validate and sanitize all user inputs (covered, but emphasize)
+     * Prevent SQL injection using ORM query bindings (covered)
+     * Enforce authentication and authorization on every protected route (covered)
+     * Ensure proper CORS configuration
+     * Do not leak internal errors or stack traces (covered in error_leakage)
+
+38. **Logging, Error Handling & Testing**:
+   - Use structured and meaningful logs (covered in logging standards)
+   - Avoid logging sensitive data (covered in PII check)
+   - Ensure graceful error handling with clear API responses (covered)
+   - **CRITICAL**: Validate unit tests exist for:
+     * Services and business logic
+     * API endpoints
+     * Critical UI flows/components
+   - Add integration tests for complex database interactions
+   - Flag missing test coverage for new functionality
 
 ## ADDITIONAL SENIOR REVIEWER STANDARDS
 
@@ -484,17 +605,25 @@ Please provide a detailed code review focusing on:
    - Check that code examples in documentation are accurate
    - Verify parameter and return type documentation
 
-15. **Error Handling Patterns**:
-   - Validate consistent error handling approach across the codebase
-   - Check error messages are user-friendly and informative (not exposing internals)
-   - Verify proper error logging (not just console.log)
+15. **Error Handling & Resilience**:
+   - **CRITICAL**: Flag swallowed exceptions (empty catch blocks that ignore errors)
+   - Flag overly generic exception handling (catch (Exception) or catch (Error) without specific handling)
+   - Check for inconsistent error propagation (some errors logged, others not)
+   - Verify correct HTTP status codes for API responses (200 for success, 400 for client errors, 500 for server errors)
+   - Flag missing fallback logic for critical operations
    - Ensure errors are caught and handled appropriately (try-catch, promises, async/await)
    - Check for unhandled promise rejections
    - Verify graceful degradation when errors occur
    - Flag generic catch blocks that swallow errors without logging
+   - Validate error messages are user-friendly and informative (not exposing internals)
 
-16. **Logging Standards**:
-   - Check appropriate log levels are used (DEBUG, INFO, WARN, ERROR)
+16. **Observability & Operability**:
+   - **CRITICAL**: Check for missing or noisy logging (too many logs or no logs at all)
+   - Verify appropriate log levels are used (DEBUG, INFO, WARN, ERROR)
+   - Flag missing correlation IDs / trace IDs for request tracking
+   - Check for missing metrics for critical paths (success/failure rates, latency)
+   - Flag missing health checks for new components/services
+   - Verify feature flags are used for risky changes (not hard-coded)
    - Verify structured logging format (JSON, key-value pairs)
    - Ensure sensitive data (passwords, tokens, PII) is NOT logged
    - Check log messages are meaningful and include context
@@ -513,7 +642,13 @@ Please provide a detailed code review focusing on:
 
 **MEDIUM PRIORITY CHECKS:**
 
-18. **API Design Standards**:
+18. **API Design & Contract Consistency**:
+   - **CRITICAL**: Flag breaking API changes without versioning
+   - Check for backward compatibility issues (removed fields, changed types, etc.)
+   - Verify consistent request/response shapes across similar endpoints
+   - Flag missing validation annotations (required fields, data types, constraints)
+   - Check for DTO vs domain leakage (domain objects exposed directly in API responses)
+   - Flag incorrect default values in API responses or request handling
    - Validate RESTful API conventions (HTTP methods, status codes, URLs)
    - Check API versioning strategy is followed
    - Verify request/response validation
@@ -535,15 +670,17 @@ Please provide a detailed code review focusing on:
    - Verify database queries are optimized (EXPLAIN plans)
    - Check for missing indexes on frequently queried columns
 
-20. **Concurrency & Threading**:
-   - Check for race conditions in multi-threaded code
+20. **Concurrency & Thread Safety**:
+   - **CRITICAL**: Check for race conditions in multi-threaded code
    - Verify thread safety (locks, mutexes, atomic operations)
    - Check for deadlock potential
-   - Validate async/await patterns are used correctly
    - Flag shared mutable state without proper synchronization
+   - Flag non-thread-safe collections used in concurrent contexts (e.g., ArrayList in Java, regular dict in Python)
    - Check for proper handling of concurrent requests
+   - Validate async/await patterns are used correctly
    - Verify promise/async error handling
    - Check for memory leaks in async operations
+   - Flag improper use of async/await that could cause race conditions
 
 21. **Memory & Resource Management**:
    - Check for memory leaks (unclosed connections, event listeners, timers)
@@ -567,6 +704,115 @@ Please provide a detailed code review focusing on:
    - Check if PR addresses a single concern/feature
    - Verify breaking changes are documented
 
+**CRITICAL SECURITY & COMPLIANCE CHECKS (SME FEEDBACK):**
+
+23. **Authorization - Object-Level Access Control**:
+   - **CRITICAL**: When endpoints access user/customer/tenant data, verify object-level authorization is enforced
+   - Flag endpoints that query user data without proper authorization checks (e.g., missing WHERE user_id = ? or tenant_id = ?)
+   - Check for authorization middleware/checks before data access operations
+   - Verify that users can only access their own records (not other users' data)
+   - Flag missing authorization checks in:
+     * GET endpoints that return user-specific data
+     * UPDATE/DELETE operations on user records
+     * Any query that filters by user_id, customer_id, tenant_id without validation
+   - Ensure authorization happens server-side, not just client-side
+   - Check for proper role-based access control (RBAC) when applicable
+
+24. **External Integrations - Safe Failure Handling**:
+   - **CRITICAL**: All third-party/internal service calls must have proper error handling
+   - Flag external API calls (fetch, axios, http requests) without try/catch blocks
+   - Require meaningful fallback/error responses for external service failures
+   - Check for graceful degradation when external services fail
+   - Flag missing timeout handling for external calls
+   - Verify circuit breaker patterns for critical external dependencies
+   - Check for proper retry logic with exponential backoff
+   - Ensure one dependency failure doesn't break the entire flow
+   - Flag missing error handling for:
+     * Payment gateway calls
+     * Email/SMS service calls
+     * Third-party API integrations
+     * Internal microservice calls
+
+25. **Database Correctness & Constraints**:
+   - **CRITICAL**: Flag missing database constraints and optimizations
+   - Check for missing indexes on frequently queried columns (especially in WHERE clauses)
+   - Flag UPDATE/DELETE queries without WHERE clauses (prevents accidental mass updates)
+   - Verify transaction boundaries for multi-step database operations
+   - Check for missing foreign key constraints (if schema context available)
+   - Flag queries that could cause data integrity issues
+   - Verify proper use of database transactions for atomic operations
+   - Check for missing unique constraints on columns that should be unique
+   - Flag N+1 query problems
+   - Verify proper connection pooling usage
+   - **Note**: Full schema validation requires DB schema/migrations in scope (to be enhanced)
+
+26. **Secrets & Configuration Safety**:
+   - **CRITICAL**: Never allow hardcoded secrets, tokens, or sensitive configuration
+   - Detect and flag hardcoded:
+     * API keys (pattern: api[_-]?key, apikey, secret[_-]?key)
+     * Passwords (password\s*=\s*['\"][^'\"]+)
+     * Tokens (token\s*=\s*['\"][^'\"]+, jwt[_-]?secret)
+     * AWS keys (aws[_-]?(access[_-]?key|secret[_-]?key))
+     * Database credentials (db[_-]?(password|pass|pwd))
+     * OAuth secrets (client[_-]?secret, oauth[_-]?secret)
+     * Connection strings with credentials
+   - Flag environment-specific URLs hardcoded in code:
+     * localhost, 127.0.0.1, staging URLs, production URLs
+   - **CRITICAL**: Flag environment-specific behavior hardcoded (should use config/env)
+   - Check for missing configuration defaults (required configs should have defaults)
+   - Flag unsafe feature toggles (feature flags that could cause security issues)
+   - Verify config values are validated (type, range, required fields)
+   - Flag secrets in config files (should be in environment variables or secret management)
+   - Enforce configuration via environment variables or config layer
+   - Flag feature flags hardcoded in code (should be in config)
+   - Check for secrets in:
+     * Variable assignments
+     * String literals
+     * Configuration objects
+     * Comments (sometimes developers leave secrets in comments)
+   - Verify sensitive configs are not committed in PR
+
+27. **Sensitive Data & PII Exposure**:
+   - **CRITICAL**: Prevent PII and sensitive data exposure in APIs and logs
+   - Flag unnecessary PII in API responses:
+     * Email addresses (unless required)
+     * Phone numbers (unless required)
+     * PAN numbers (Indian tax ID pattern)
+     * Aadhaar numbers (12-digit pattern)
+     * Full addresses (unless required)
+     * Date of birth
+     * Social Security Numbers (SSN patterns)
+   - Detect and flag sensitive data in logs:
+     * Passwords (password, pwd, passwd in log messages)
+     * Tokens (token, jwt, access_token, refresh_token)
+     * OTP codes (otp, verification[_-]?code)
+     * Credit card numbers (pattern detection)
+     * PAN/Aadhaar numbers
+     * API keys or secrets
+   - Flag storing secrets in plain text anywhere (database, files, variables)
+   - Check for sensitive fields in:
+     * API response objects
+     * Log statements (console.log, logger.info with sensitive data)
+     * Error messages (shouldn't expose internal details)
+     * Debug output
+   - Verify data masking/redaction for sensitive fields in logs
+   - Flag unnecessary sensitive fields returned in GET responses
+
+28. **Error Handling - No Internal Leakage**:
+   - **CRITICAL**: Ensure error responses don't leak internal system details
+   - Flag raw exception messages sent to clients (error.message, error.stack)
+   - Check for stack traces in API responses
+   - Verify detailed error objects are not exposed to end users
+   - Flag database error messages exposed to clients (should be sanitized)
+   - Ensure error responses are user-friendly and don't reveal:
+     * Stack traces
+     * File paths
+     * Database connection strings
+     * Internal system architecture
+     * Code structure or variable names
+   - Verify error logging happens server-side (detailed errors in logs, not responses)
+   - Check for proper error sanitization before sending to client
+
 ## OUTPUT FORMAT
 
 Format your response as JSON with the following structure:
@@ -589,7 +835,7 @@ Format your response as JSON with the following structure:
     {{
       "line": <line_number or null>,
       "severity": "info|warning|error",
-      "category": "requirement|quality|bug|security|performance|boilerplate|design|testing|scope|style|documentation|error_handling|logging|architecture|api|database|concurrency|memory|pr_quality",
+      "category": "requirement|quality|bug|security|performance|boilerplate|design|testing|scope|style|documentation|error_handling|logging|architecture|api|database|concurrency|memory|pr_quality|authorization|external_integration|db_constraints|secrets|pii|error_leakage|duplication|unused_code|commented_code|hardcoded_values|signature|business_logic|async_handling|formatting|frontend_security|test_coverage|insecure_defaults|crypto|input_validation|unbounded_loops|inefficient_data_structures|caching|swallowed_exceptions|error_propagation|thread_safety|api_contract|observability|config_safety",
       "title": "Brief issue title",
       "description": "Detailed explanation",
       "suggestion": "Specific recommendation or code example"
