@@ -218,8 +218,18 @@ class AICodeReviewer:
         # Get list of all changed files for scope check
         changed_files = [fd.filename for fd in getattr(self, '_all_file_diffs', [])]
         
+        # Calculate total PR size across all files
+        total_additions = sum(fd.additions for fd in getattr(self, '_all_file_diffs', []))
+        total_deletions = sum(fd.deletions for fd in getattr(self, '_all_file_diffs', []))
+        total_changes = total_additions + total_deletions
+        
+        # PR size warning
+        pr_size_warning = ""
+        if len(changed_files) > 10 or total_changes > 500:
+            pr_size_warning = "\n⚠️ **PR SIZE WARNING**: This PR is large. Consider breaking it into smaller, focused PRs for easier review."
+        
         # Build base prompt
-        prompt = f"""You are an expert code reviewer. Review the following code changes and provide constructive feedback.
+        prompt = f"""You are a senior code reviewer with 10+ years of experience. Review the following code changes with the rigor and standards expected from a team lead or principal engineer. Provide constructive, specific, and actionable feedback.
 
 {jira_context if jira_context else ""}
 
@@ -229,8 +239,14 @@ class AICodeReviewer:
 **Status:** {file_diff.status}
 **Changes:** +{file_diff.additions} -{file_diff.deletions}
 
-**All Changed Files in PR:**
+**All Changed Files in PR:** ({len(changed_files)} files)
 {chr(10).join(f"- {f}" for f in changed_files)}
+
+**PR Size Analysis:**
+- Total files changed: {len(changed_files)}
+- Total lines added: {total_additions}
+- Total lines deleted: {total_deletions}
+- Total changes: {total_changes} lines{pr_size_warning}
 
 **DIFF:**
 {file_diff.patch}
@@ -320,6 +336,109 @@ Please provide a detailed code review focusing on:
 11. **Design Patterns**: Suggest better architectural patterns if applicable
 12. **Testing**: Missing test cases or testability issues
 
+## ADDITIONAL SENIOR REVIEWER STANDARDS
+
+**HIGH PRIORITY CHECKS:**
+
+13. **Code Style & Consistency**:
+   - Check code formatting consistency (indentation, spacing, brackets)
+   - Validate naming conventions (camelCase, PascalCase, snake_case, kebab-case) match project standards
+   - Verify file organization and structure follows project conventions
+   - Check import/require ordering and grouping
+   - Flag inconsistent coding styles across files
+   - Ensure code follows language-specific style guides (ESLint, Prettier, PEP 8, etc.)
+
+14. **Documentation Requirements**:
+   - Verify functions/classes have proper documentation (JSDoc, docstrings, JavaDoc)
+   - Check for inline comments explaining complex logic or business rules
+   - Flag missing documentation for public APIs, classes, and complex functions
+   - Ensure README/documentation is updated for new features
+   - Check that code examples in documentation are accurate
+   - Verify parameter and return type documentation
+
+15. **Error Handling Patterns**:
+   - Validate consistent error handling approach across the codebase
+   - Check error messages are user-friendly and informative (not exposing internals)
+   - Verify proper error logging (not just console.log)
+   - Ensure errors are caught and handled appropriately (try-catch, promises, async/await)
+   - Check for unhandled promise rejections
+   - Verify graceful degradation when errors occur
+   - Flag generic catch blocks that swallow errors without logging
+
+16. **Logging Standards**:
+   - Check appropriate log levels are used (DEBUG, INFO, WARN, ERROR)
+   - Verify structured logging format (JSON, key-value pairs)
+   - Ensure sensitive data (passwords, tokens, PII) is NOT logged
+   - Check log messages are meaningful and include context
+   - Verify performance-critical operations are logged
+   - Flag console.log statements in production code (should use proper logger)
+   - Check logging doesn't create performance bottlenecks
+
+17. **Architecture Alignment**:
+   - Verify code follows existing architectural patterns in the codebase
+   - Check separation of concerns (business logic, data access, presentation)
+   - Validate dependency direction (high-level modules shouldn't depend on low-level)
+   - Ensure code fits the overall system architecture
+   - Check for architectural violations (circular dependencies, tight coupling)
+   - Verify adherence to SOLID principles
+   - Flag code that doesn't align with existing patterns
+
+**MEDIUM PRIORITY CHECKS:**
+
+18. **API Design Standards**:
+   - Validate RESTful API conventions (HTTP methods, status codes, URLs)
+   - Check API versioning strategy is followed
+   - Verify request/response validation
+   - Ensure consistent API response format (success/error structure)
+   - Check API documentation is complete and accurate
+   - Verify proper HTTP status codes are used (200, 201, 400, 401, 404, 500, etc.)
+   - Flag missing input validation on API endpoints
+   - Check rate limiting is properly implemented
+   - Verify API endpoints follow naming conventions
+
+19. **Database Query Optimization**:
+   - Check for N+1 query problems
+   - Verify proper use of database indexes
+   - Flag inefficient queries (full table scans, missing WHERE clauses)
+   - Check for SQL injection vulnerabilities (parameterized queries)
+   - Verify transaction management is correct
+   - Check connection pooling is used appropriately
+   - Flag queries that fetch unnecessary data (SELECT *)
+   - Verify database queries are optimized (EXPLAIN plans)
+   - Check for missing indexes on frequently queried columns
+
+20. **Concurrency & Threading**:
+   - Check for race conditions in multi-threaded code
+   - Verify thread safety (locks, mutexes, atomic operations)
+   - Check for deadlock potential
+   - Validate async/await patterns are used correctly
+   - Flag shared mutable state without proper synchronization
+   - Check for proper handling of concurrent requests
+   - Verify promise/async error handling
+   - Check for memory leaks in async operations
+
+21. **Memory & Resource Management**:
+   - Check for memory leaks (unclosed connections, event listeners, timers)
+   - Verify resource cleanup (file handles, database connections, streams)
+   - Check for proper disposal of resources (using statements, finally blocks)
+   - Flag unbounded data structures that could cause memory issues
+   - Verify large objects are properly released
+   - Check for circular references that prevent garbage collection
+   - Verify streaming/chunking for large data processing
+
+22. **PR Quality Checks**:
+   - Check PR size (flag if too large - suggest breaking into smaller PRs)
+   - Verify PR description is clear and includes:
+     * What changes were made
+     * Why the changes were made
+     * How to test the changes
+     * Screenshots/demos if UI changes
+   - Check commit messages follow conventions (conventional commits)
+   - Verify branch naming follows standards
+   - Flag PRs that mix unrelated changes
+   - Check if PR addresses a single concern/feature
+   - Verify breaking changes are documented
+
 ## OUTPUT FORMAT
 
 Format your response as JSON with the following structure:
@@ -342,7 +461,7 @@ Format your response as JSON with the following structure:
     {{
       "line": <line_number or null>,
       "severity": "info|warning|error",
-      "category": "requirement|quality|bug|security|performance|boilerplate|design|testing|scope",
+      "category": "requirement|quality|bug|security|performance|boilerplate|design|testing|scope|style|documentation|error_handling|logging|architecture|api|database|concurrency|memory|pr_quality",
       "title": "Brief issue title",
       "description": "Detailed explanation",
       "suggestion": "Specific recommendation or code example"
@@ -394,9 +513,24 @@ Be constructive, specific, and helpful. Focus on meaningful improvements."""
 
         try:
             # Enhanced system message for JIRA-aware reviews
-            system_message = "You are an expert code reviewer with deep knowledge of software engineering best practices, security, and design patterns."
+            system_message = """You are a senior code reviewer with 10+ years of experience, acting as a team lead or principal engineer. You have deep expertise in:
+- Software engineering best practices and clean code principles
+- Security vulnerabilities and OWASP Top 10
+- Design patterns and architecture
+- Code style, documentation, and maintainability standards
+- Error handling, logging, and observability
+- API design, database optimization, and performance
+- Concurrency, memory management, and resource handling
+- Testing strategies and quality assurance
+
+You review code with the same rigor and standards expected from a senior engineer or team lead. Your reviews are:
+- Constructive and educational (help developers learn)
+- Specific and actionable (provide clear guidance)
+- Balanced (acknowledge good practices, suggest improvements)
+- Professional and respectful (maintain positive team culture)"""
+            
             if self.jira_issue:
-                system_message += " You are also an expert at evaluating code implementations against JIRA ticket requirements and acceptance criteria. You must strictly verify that code changes align with the specified requirements."
+                system_message += "\n\nYou are also an expert at evaluating code implementations against JIRA ticket requirements and acceptance criteria. You must strictly verify that code changes align with the specified requirements."
             
             response = self.client.chat.completions.create(
                 model="gpt-4o",  # Using GPT-4 Turbo (you can update to GPT-5 when available)
@@ -869,44 +1003,6 @@ Be constructive, specific, and helpful. Focus on meaningful improvements."""
                 summary += "❌ **Some JIRA requirements are not met. Please review.**\n\n"
             
             summary += "---\n\n"
-        
-        summary += "## Detailed Analysis\n\n"
-        
-        for file_diff, review in file_reviews:
-            if not review:
-                continue
-            
-            summary += f"\n### 📄 `{file_diff.filename}`\n\n"
-            summary += f"**Overall Assessment**: {review.get('overall_assessment', 'No assessment provided')}\n\n"
-            
-            if review.get('positive_aspects'):
-                summary += "**✨ Positive Aspects**:\n"
-                for aspect in review['positive_aspects']:
-                    summary += f"- {aspect}\n"
-                summary += "\n"
-            
-            if review.get('issues'):
-                summary += f"**Issues Found** ({len(review['issues'])}):\n\n"
-                
-                for i, issue in enumerate(review['issues'], 1):
-                    emoji_map = {
-                        'quality': '🎨',
-                        'bug': '🐛',
-                        'security': '🔒',
-                        'performance': '⚡',
-                        'boilerplate': '♻️',
-                        'design': '🏗️',
-                        'testing': '🧪'
-                    }
-                    emoji = emoji_map.get(issue.get('category', ''), '💡')
-                    
-                    summary += f"{i}. {emoji} **{issue['title']}**"
-                    if issue.get('line'):
-                        summary += f" (Line {issue['line']})"
-                    summary += f"\n   - {issue['description']}\n"
-                    if issue.get('suggestion'):
-                        summary += f"   - 💡 *Suggestion*: {issue['suggestion']}\n"
-                    summary += "\n"
         
         summary += "\n---\n"
         summary += "*This review was automatically generated using AI. Please review the suggestions and use your judgment.*\n"
