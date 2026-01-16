@@ -65,6 +65,34 @@ class AICodeReviewer:
         cmd = f"git diff --name-status {self.base_sha} {self.head_sha}"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         
+        # Get files that were changed in commits with current JIRA key (if available)
+        files_from_jira_commits = set()
+        if self.jira_key:
+            print(f"🔍 Filtering files from commits with JIRA key {self.jira_key}...")
+            # Get commits between base and head that contain the JIRA key in commit message
+            commit_cmd = f"git log {self.base_sha}..{self.head_sha} --pretty=format:%H --grep={self.jira_key} --all-match"
+            commit_result = subprocess.run(commit_cmd, shell=True, capture_output=True, text=True)
+            
+            if commit_result.stdout.strip():
+                commit_hashes = commit_result.stdout.strip().split('\n')
+                print(f"📝 Found {len(commit_hashes)} commit(s) with JIRA key {self.jira_key}")
+                
+                # Get files changed in those commits
+                for commit_hash in commit_hashes:
+                    file_cmd = f"git diff-tree --no-commit-id --name-only -r {commit_hash}"
+                    file_result = subprocess.run(file_cmd, shell=True, capture_output=True, text=True)
+                    for file in file_result.stdout.strip().split('\n'):
+                        if file:
+                            files_from_jira_commits.add(file)
+                
+                if files_from_jira_commits:
+                    print(f"✅ Will review {len(files_from_jira_commits)} file(s) from commits with JIRA key {self.jira_key}")
+            else:
+                # If no commits found with JIRA key, check if branch name or PR title has it
+                # In that case, review all files (might be first commit without JIRA key in message)
+                print(f"⚠️  No commits found with JIRA key {self.jira_key} in commit message")
+                print(f"   Reviewing all files in PR (JIRA key found in branch/PR title)")
+        
         file_diffs = []
         for line in result.stdout.strip().split('\n'):
             if not line:
@@ -81,13 +109,36 @@ class AICodeReviewer:
             if self._should_skip_file(filename):
                 continue
             
+            # If JIRA key is available, only review files from commits with that JIRA key
+            if self.jira_key:
+                if files_from_jira_commits:
+                    # We have commits with JIRA key - only review files from those commits
+                    if filename not in files_from_jira_commits:
+                        print(f"⏭️  Skipping {filename} (not in commits with JIRA key {self.jira_key})")
+                        continue
+                else:
+                    # No commits found with JIRA key, but JIRA key exists in branch/PR
+                    # Only review files that match the JIRA ticket context
+                    # For SEC-400 (payment), only review payment-related files
+                    if not self._is_file_related_to_jira_ticket(filename):
+                        print(f"⏭️  Skipping {filename} (not related to JIRA ticket {self.jira_key})")
+                        continue
+            
             # Get the diff for this file
             diff_cmd = f"git diff {self.base_sha} {self.head_sha} -- {filename}"
             diff_result = subprocess.run(diff_cmd, shell=True, capture_output=True, text=True)
             
+            # Only include if there are actual changes (not just whitespace)
+            if not diff_result.stdout.strip() or diff_result.stdout.strip() == '':
+                continue
+            
             # Count additions and deletions
-            additions = len([l for l in diff_result.stdout.split('\n') if l.startswith('+')])
-            deletions = len([l for l in diff_result.stdout.split('\n') if l.startswith('-')])
+            additions = len([l for l in diff_result.stdout.split('\n') if l.startswith('+') and not l.startswith('+++')])
+            deletions = len([l for l in diff_result.stdout.split('\n') if l.startswith('-') and not l.startswith('---')])
+            
+            # Skip if no actual code changes (only metadata)
+            if additions == 0 and deletions == 0:
+                continue
             
             file_diffs.append(FileDiff(
                 filename=filename,
@@ -101,16 +152,93 @@ class AICodeReviewer:
     
     def _should_skip_file(self, filename: str) -> bool:
         """Determine if a file should be skipped from review"""
-        skip_patterns = [
+        # Always skip these patterns (infrastructure, config, docs, etc.)
+        always_skip_patterns = [
+            # Lock files
             '.lock', 'package-lock.json', 'yarn.lock',
+            # Minified files
             '.min.js', '.min.css',
-            '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico',
-            '.pdf', '.zip', '.tar', '.gz',
-            'dist/', 'build/', 'node_modules/', '__pycache__/',
-            '.env', '.env.local', '.env.production'
+            # Binary files
+            '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp',
+            '.pdf', '.zip', '.tar', '.gz', '.rar',
+            # Build/dist directories
+            'dist/', 'build/', 'node_modules/', '__pycache__/', '.next/', 'out/',
+            # Environment files
+            '.env', '.env.local', '.env.production', '.env.development',
+            # CI/CD configuration files (not part of feature code)
+            '.github/', '.gitlab-ci.yml', 'bitbucket-pipelines.yml', '.circleci/',
+            # IDE files
+            '.idea/', '.vscode/', '.settings/',
+            # Temporary files
+            '.tmp', '.temp', '.log', '.cache',
         ]
         
-        return any(pattern in filename for pattern in skip_patterns)
+        # Skip if matches always-skip patterns
+        if any(pattern in filename for pattern in always_skip_patterns):
+            return True
+        
+        # Skip documentation files (unless in src/ or feature directories)
+        doc_patterns = ['.md', 'README', 'CHANGELOG', 'LICENSE', 'CONTRIBUTING', 'SETUP', 'QUICK_START']
+        if any(pattern in filename for pattern in doc_patterns):
+            # Only review docs if they're in src/ or feature directories
+            if not any(dir in filename for dir in ['src/', 'lib/', 'app/', 'features/', 'docs/']):
+                return True
+        
+        # Skip demo/example files (always skip, they're not production code)
+        filename_lower = filename.lower()
+        demo_patterns = [
+            'demo_', 'demo.', 'demo-', '/demo/',
+            'example_', 'example.', 'example-', '/example/',
+            'sample_', 'sample.', 'sample-', '/sample/'
+        ]
+        if any(pattern in filename_lower for pattern in demo_patterns):
+            return True
+        
+        # Skip scripts/tools outside of src/ (unless they're part of the feature)
+        if filename.startswith('scripts/') or filename.startswith('tools/') or filename.startswith('bin/'):
+            # Only review if they're in src/ or feature directories
+            if not any(dir in filename for dir in ['src/', 'lib/', 'app/', 'features/']):
+                return True
+        
+        # Skip config files outside of src/ or feature directories
+        config_extensions = ['.json', '.yaml', '.yml']
+        if any(filename.endswith(ext) for ext in config_extensions):
+            # Only review if in src/, lib/, app/, or feature directories
+            if not any(dir in filename for dir in ['src/', 'lib/', 'app/', 'features/']):
+                return True
+        
+        return False
+    
+    def _is_file_related_to_jira_ticket(self, filename: str) -> bool:
+        """
+        Check if a file is related to the current JIRA ticket based on ticket summary/description
+        This is a fallback when commit-based filtering doesn't work
+        """
+        if not self.jira_issue:
+            return True  # If no JIRA ticket, review all files
+        
+        jira_summary = self.jira_issue.get('summary', '').lower()
+        jira_description = self.jira_issue.get('description', '').lower()
+        filename_lower = filename.lower()
+        
+        # Extract keywords from JIRA ticket
+        keywords = []
+        if 'payment' in jira_summary or 'payment' in jira_description:
+            keywords.extend(['payment', 'pay', 'transaction', 'refund', 'billing'])
+        if 'login' in jira_summary or 'authentication' in jira_summary or 'auth' in jira_summary:
+            keywords.extend(['login', 'auth', 'authentication', 'session', 'token'])
+        if 'profile' in jira_summary or 'user profile' in jira_summary:
+            keywords.extend(['profile', 'user'])
+        
+        # Check if filename contains any relevant keywords
+        if keywords:
+            if any(keyword in filename_lower for keyword in keywords):
+                return True
+            # If no keywords match, it's probably not related
+            return False
+        
+        # If we can't determine, be conservative and review it
+        return True
     
     def _filter_out_of_scope_files(self, out_of_scope_files: set) -> set:
         """
@@ -252,7 +380,7 @@ class AICodeReviewer:
 {file_diff.patch}
 
 **FULL FILE CONTENT:**
-{file_content[:10000]}  # Limit to first 10k chars
+{file_content[:8000]}  # Limited to 8k chars for faster processing
 
 ## REVIEW REQUIREMENTS
 
@@ -501,10 +629,12 @@ Be constructive, specific, and helpful. Focus on meaningful improvements."""
         """Review a single file using AI"""
         print(f"📝 Reviewing {file_diff.filename}...")
         
-        # Read the full file content if it exists
+        # Read the full file content if it exists (limit to 8000 chars for faster processing)
         try:
             with open(file_diff.filename, 'r', encoding='utf-8') as f:
-                file_content = f.read()
+                full_content = f.read()
+                # Limit file content to 8000 chars to reduce prompt size and API latency
+                file_content = full_content[:8000] + ("\n... (truncated)" if len(full_content) > 8000 else "")
         except:
             file_content = "File not accessible or was deleted"
         
@@ -532,14 +662,16 @@ You review code with the same rigor and standards expected from a senior enginee
             if self.jira_issue:
                 system_message += "\n\nYou are also an expert at evaluating code implementations against JIRA ticket requirements and acceptance criteria. You must strictly verify that code changes align with the specified requirements."
             
+            # Use faster model settings for better performance
             response = self.client.chat.completions.create(
-                model="gpt-4o",  # Using GPT-4 Turbo (you can update to GPT-5 when available)
+                model="gpt-4o",  # Using GPT-4o for faster responses
                 messages=[
                     {"role": "system", "content": system_message},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3,
-                response_format={"type": "json_object"}
+                temperature=0.2,  # Lower temperature for faster, more consistent responses
+                response_format={"type": "json_object"},
+                max_tokens=4000  # Limit response size for faster processing
             )
             
             review_result = json.loads(response.choices[0].message.content)
@@ -1157,15 +1289,29 @@ Once a valid JIRA ticket is detected, the AI review will evaluate your code agai
         print(f"📁 Found {len(file_diffs)} file(s) to review")
         print("-" * 60)
         
-        # Review each file
+        # Review each file (with timing for performance monitoring)
         file_reviews = []
         # Store file_diffs for use in prompt building
         self._all_file_diffs = file_diffs
-        for file_diff in file_diffs:
+        
+        import time
+        start_time = time.time()
+        
+        for idx, file_diff in enumerate(file_diffs, 1):
+            print(f"📝 [{idx}/{len(file_diffs)}] Reviewing {file_diff.filename}...")
+            file_start = time.time()
+            
             review = self.review_file(file_diff)
+            
+            file_elapsed = time.time() - file_start
+            print(f"✅ [{idx}/{len(file_diffs)}] Completed {file_diff.filename} in {file_elapsed:.1f}s")
+            
             if review:
                 file_reviews.append((file_diff, review))
                 self.post_review_comments(file_diff, review)
+        
+        total_elapsed = time.time() - start_time
+        print(f"⏱️  Total review time: {total_elapsed:.1f}s ({total_elapsed/60:.1f} minutes)")
         
         # Generate summary
         self.generate_review_summary(file_reviews)
