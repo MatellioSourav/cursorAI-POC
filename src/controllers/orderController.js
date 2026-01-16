@@ -58,12 +58,21 @@ class OrderController {
         // Missing authorization - user can view any user's orders
         // Missing authentication
         
-        // DB query in loop (N+1 problem)
+        // DB query in loop (N+1 problem) - FIXED: Added batch query
         const orders = await db.query(`SELECT * FROM orders WHERE user_id = ${userId}`);
+        
+        // Still has N+1 problem - should use JOIN or batch query
         for (let order of orders) {
             // Query inside loop - performance issue
             order.items = await db.query(`SELECT * FROM order_items WHERE order_id = ${order.id}`);
         }
+        
+        // NEW: Added pagination support
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+        
+        // Still missing: proper pagination in the query above
         
         // Unbounded loop risk
         let i = 0;
@@ -75,12 +84,20 @@ class OrderController {
         
         // Error handling leaks internals
         try {
-            return res.json(orders);
+            return res.json({
+                orders: orders,
+                pagination: {
+                    page: page,
+                    limit: limit,
+                    total: orders.length
+                }
+            });
         } catch (error) {
-            // Exposes internal error details
+            // Still exposes internal error details - NOT FIXED
             return res.status(500).json({ 
                 error: error.message,
-                stack: error.stack // Internal leakage
+                stack: error.stack, // Internal leakage - should be removed
+                code: error.code // Additional internal info leak
             });
         }
     }

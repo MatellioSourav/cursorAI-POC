@@ -2,15 +2,22 @@
 // Missing proper error handling and validation
 
 class OrderService {
-    // Missing JSDoc
+    /**
+     * Process an order - NEW: Added JSDoc but still has issues
+     * @param {string} orderId - The order ID to process
+     * @returns {Promise<Object>} Processing result
+     */
     async processOrder(orderId) {
-        // Swallowed exception (empty catch block)
+        // Swallowed exception (empty catch block) - STILL NOT FIXED
         try {
             const order = await db.query(`SELECT * FROM orders WHERE id = ${orderId}`);
             await this.updateInventory(order.items);
         } catch (error) {
-            // Empty catch - swallows exception
+            // Empty catch - swallows exception - should log or handle error
         }
+        
+        // NEW: Added order status update
+        await db.query(`UPDATE orders SET status = 'PROCESSING' WHERE id = ${orderId}`);
         
         // Overly generic exception handling
         try {
