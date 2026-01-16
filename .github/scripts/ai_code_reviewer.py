@@ -112,6 +112,56 @@ class AICodeReviewer:
         
         return any(pattern in filename for pattern in skip_patterns)
     
+    def _filter_out_of_scope_files(self, out_of_scope_files: set) -> set:
+        """
+        Filter out files that are actually in scope based on JIRA ticket context.
+        This prevents false positives where authentication-related files are flagged as out-of-scope.
+        """
+        if not self.jira_issue:
+            return out_of_scope_files
+        
+        jira_summary = self.jira_issue.get('summary', '').lower()
+        jira_description = self.jira_issue.get('description', '').lower()
+        
+        # Check if ticket is about authentication/login
+        auth_keywords = ['login', 'authentication', 'auth', 'session', 'token', 'password', 'user login']
+        is_auth_ticket = any(keyword in jira_summary or keyword in jira_description for keyword in auth_keywords)
+        
+        if not is_auth_ticket:
+            return out_of_scope_files
+        
+        # Files that are clearly in scope for authentication tickets
+        in_scope_patterns = [
+            'login', 'auth', 'authentication', 'session', 'token', 'password',
+            'middleware', 'service', 'controller', 'route', 'model'
+        ]
+        
+        # Files that are clearly out of scope (CI/CD, docs, demos)
+        always_out_of_scope = [
+            '.github/', '.gitlab/', 'bitbucket-pipelines',
+            'demo_', 'example_', 'test_', '_test.', '.test.',
+            'README', 'CHANGELOG', 'LICENSE', '.md',
+            'package.json', 'requirements.txt', 'Dockerfile',
+            'docker-compose', '.config', '.yml', '.yaml'
+        ]
+        
+        filtered = set()
+        for file in out_of_scope_files:
+            file_lower = file.lower()
+            
+            # Always include files that are clearly out of scope
+            if any(pattern in file_lower for pattern in always_out_of_scope):
+                filtered.add(file)
+            # Exclude files that match in-scope patterns for auth tickets
+            elif any(pattern in file_lower for pattern in in_scope_patterns):
+                # This file is likely in scope, don't include it
+                continue
+            else:
+                # Keep other files as potentially out of scope
+                filtered.add(file)
+        
+        return filtered
+    
     def _extract_code_snippet(self, file_content: str, line_number: Optional[int], context: int = 2) -> Optional[str]:
         """Return code snippet with line numbers around the specified line."""
         if not isinstance(line_number, int):
@@ -209,8 +259,13 @@ class AICodeReviewer:
 
 2. **Scope Validation**:
    - Review if ALL changed files are relevant to JIRA ticket {self.jira_key}
-   - Flag any files that seem unrelated to the ticket requirements
+   - **IMPORTANT**: Files related to the ticket topic ARE IN SCOPE. For example:
+     * For login/authentication tickets: controllers, services, middleware, routes, models, utils related to auth ARE IN SCOPE
+     * Files with names containing: login, auth, authentication, session, token, password, user (when related to auth) ARE IN SCOPE
+     * Only flag files as out-of-scope if they are clearly unrelated (e.g., documentation updates, CI/CD configs, demo files, unrelated features)
+   - Flag any files that seem completely unrelated to the ticket requirements
    - Ensure no accidental changes to unrelated functionality
+   - **DO NOT flag authentication-related files (controllers, services, middleware) as out-of-scope for authentication tickets**
 
 3. **Acceptance Criteria Checklist**:
    - Create a checklist showing which acceptance criteria are met
@@ -298,6 +353,10 @@ Format your response as JSON with the following structure:
 
 **IMPORTANT:**
 - If acceptance criteria are missing or violated, mark severity as "error" and set final_verdict to "Changes Requested"
+- **SCOPE DETECTION RULES**: 
+  * For authentication/login tickets: Files in paths like `src/controllers/*login*`, `src/services/*auth*`, `src/middleware/*auth*`, `src/routes/*auth*` ARE IN SCOPE
+  * Only flag files as out-of-scope if they are clearly unrelated (CI/CD configs, documentation, demo files, unrelated features)
+  * DO NOT flag authentication-related code files as out-of-scope for authentication tickets
 - If files are out of scope, create issues with category "scope"
 - If subtasks are not covered, mark them as "❌ Missing" in subtask_coverage
 - Be specific about which acceptance criteria are met/missing
@@ -622,9 +681,12 @@ Be constructive, specific, and helpful. Focus on meaningful improvements."""
             review_body = "## ⚠️ Changes Requested\n\n"
             review_body += "This PR does not fully meet the JIRA ticket requirements:\n\n"
             
-            # Add out-of-scope files section if any
-            if out_of_scope_files:
-                review_body += f"**Out-of-scope files detected:** {len(out_of_scope_files)} file(s) appear unrelated to the JIRA ticket.\n"
+            # Filter out-of-scope files to remove false positives
+            filtered_out_of_scope = self._filter_out_of_scope_files(out_of_scope_files)
+            
+            # Add out-of-scope files section if any remain after filtering
+            if filtered_out_of_scope:
+                review_body += f"**Out-of-scope files detected:** {len(filtered_out_of_scope)} file(s) appear unrelated to the JIRA ticket.\n"
                 review_body += "Please ensure all changes are relevant to the ticket requirements.\n\n"
             
             # Add other critical issues (limit to 3 to avoid repetition)
@@ -785,13 +847,21 @@ Be constructive, specific, and helpful. Focus on meaningful improvements."""
                     summary += f"- {criteria}\n"
                 summary += "\n"
             
-            # Out-of-Scope Files (deduplicated)
+            # Out-of-Scope Files (deduplicated and filtered)
             if all_out_of_scope:
+            # Filter out files that are clearly related to the JIRA ticket
+            filtered_out_of_scope = self._filter_out_of_scope_files(all_out_of_scope)
+            
+            if filtered_out_of_scope:
                 summary += "### ⚠️ Out-of-Scope Files\n\n"
-                summary += f"The following {len(all_out_of_scope)} file(s) appear unrelated to JIRA ticket requirements:\n\n"
-                for file in sorted(all_out_of_scope):
+                summary += f"The following {len(filtered_out_of_scope)} file(s) appear unrelated to JIRA ticket requirements:\n\n"
+                for file in sorted(filtered_out_of_scope):
                     summary += f"- `{file}`\n"
                 summary += "\n"
+            elif all_out_of_scope:
+                # If we filtered out all files, mention that authentication-related files are in scope
+                summary += "### ℹ️ Scope Note\n\n"
+                summary += "All changed files appear to be related to the JIRA ticket requirements.\n\n"
             
             if all_compliant:
                 summary += "✅ **All JIRA requirements appear to be met!**\n\n"
