@@ -141,6 +141,11 @@ class AICodeReviewer:
             
             status = file_statuses.get(filename, 'M')  # Default to Modified if status unknown
             
+            # Skip deleted files (no code to review)
+            if status == 'D':
+                print(f"⏭️  Skipping {filename} (deleted file - no code to review)")
+                continue
+            
             # Skip certain file types (CI/CD, docs, generated files, etc.)
             if self._should_skip_file(filename):
                 print(f"⏭️  Skipping {filename} (matches skip patterns)")
@@ -208,7 +213,7 @@ class AICodeReviewer:
             # Environment files
             '.env', '.env.local', '.env.production', '.env.development',
             # CI/CD configuration files (not part of feature code)
-            '.github/', '.gitlab-ci.yml', 'bitbucket-pipelines.yml', '.circleci/',
+            '.github/', '.bitbucket/', '.gitlab-ci.yml', 'bitbucket-pipelines.yml', '.circleci/',
             # IDE files
             '.idea/', '.vscode/', '.settings/',
             # Temporary files
