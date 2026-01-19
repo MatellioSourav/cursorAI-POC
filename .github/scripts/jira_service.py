@@ -139,6 +139,17 @@ class JiraService:
                     print(f"   Error message: {error_msg}")
                 except:
                     print(f"   Response: {response.text[:200]}")
+                
+                # Additional debugging for token issues
+                if response.status_code == 404 and ('Token' in str(response.text) or 'token' in str(response.text).lower()):
+                    print(f"   🔍 Debug: Token was {'present' if self.api_token else 'missing'} in request")
+                    if self.api_token:
+                        print(f"   🔍 Debug: Token length: {len(self.api_token)} chars")
+                        print(f"   🔍 Debug: Token starts with: {self.api_token[:30]}...")
+                    else:
+                        print(f"   ⚠️  JIRA_API_TOKEN environment variable is not set or empty!")
+                        print(f"   💡 Please add JIRA_API_TOKEN to GitHub repository secrets")
+                
                 return None
                 
         except requests.exceptions.Timeout:
