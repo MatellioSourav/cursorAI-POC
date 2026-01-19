@@ -106,6 +106,7 @@ pipelines:
             - |
               export JIRA_API_BASE_URL="${JIRA_API_BASE_URL:-http://hrm.matellio.com/api/jira}"
               export JIRA_PROJECT_ID="${JIRA_PROJECT_ID:-}"
+              export JIRA_API_TOKEN="${JIRA_API_TOKEN:-}"
               python .bitbucket/scripts/ai_code_reviewer_bitbucket.py || {
                 echo "❌ AI Code Reviewer failed!"
                 exit 1
