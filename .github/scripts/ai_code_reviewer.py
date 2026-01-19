@@ -58,20 +58,48 @@ class AICodeReviewer:
         self.jira_key = None
         
     def get_pr_diff(self) -> List[FileDiff]:
-        """Get the diff of files changed in the PR"""
+        """
+        Get the diff of files changed in the PR.
+        
+        CRITICAL: This method ONLY reviews files that are actually changed in the PR diff.
+        Files not in the PR diff are NEVER reviewed, regardless of JIRA ticket or commit history.
+        
+        PR Scope: base_sha → head_sha (strictly PR commit range)
+        """
         print("🔍 Fetching PR changes...")
+        print(f"   PR Range: {self.base_sha[:7]} → {self.head_sha[:7]}")
         
-        # Get list of changed files
+        # STEP 1: Get ONLY files changed in the PR diff (base...head)
+        # This is the authoritative source - if a file is not here, it's NOT in the PR
         cmd = f"git diff --name-status {self.base_sha} {self.head_sha}"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
         
-        # ROBUST: Get files from ALL commits that contain the JIRA key in their commit message
+        if not result.stdout.strip():
+            print("⚠️  No files changed in this PR")
+            return []
+        
+        # Parse PR diff to get all changed files
+        pr_changed_files = set()
+        file_statuses = {}  # Track status (A/M/D) for each file
+        
+        for line in result.stdout.strip().split('\n'):
+            if not line:
+                continue
+            parts = line.split('\t')
+            if len(parts) >= 2:
+                status = parts[0]
+                filename = parts[1]
+                pr_changed_files.add(filename)
+                file_statuses[filename] = status
+        
+        print(f"✅ Found {len(pr_changed_files)} file(s) changed in PR diff")
+        
+        # STEP 2: Optional - Get files from JIRA commits for context (informational only)
+        # This is used for logging/context, NOT for filtering
         files_from_jira_commits = set()
         if self.jira_key:
-            print(f"🔍 Searching for commits with JIRA key {self.jira_key}...")
+            print(f"🔍 Searching for commits with JIRA key {self.jira_key} (for context only)...")
             
-            # Method 1: Use git log --grep (case-insensitive, flexible matching)
-            # This catches: "SEC-401: message", "message SEC-401", "fix SEC-401", etc.
             commit_cmd = f"git log {self.base_sha}..{self.head_sha} --pretty=format:%H --grep={self.jira_key} -i"
             commit_result = subprocess.run(commit_cmd, shell=True, capture_output=True, text=True)
             
@@ -79,8 +107,7 @@ class AICodeReviewer:
             if commit_result.stdout.strip():
                 commit_hashes = commit_result.stdout.strip().split('\n')
             
-            # Method 2: Also check ALL commits and extract JIRA keys from each message
-            # This is more robust - catches any commit message format
+            # Also check all commits in PR range
             all_commits_cmd = f"git log {self.base_sha}..{self.head_sha} --pretty=format:%H|%s"
             all_commits_result = subprocess.run(all_commits_cmd, shell=True, capture_output=True, text=True)
             
@@ -88,97 +115,69 @@ class AICodeReviewer:
                 for line in all_commits_result.stdout.strip().split('\n'):
                     if '|' in line:
                         commit_hash, commit_msg = line.split('|', 1)
-                        # Check if this commit message contains the JIRA key (case-insensitive)
                         if self.jira_key.upper() in commit_msg.upper():
                             if commit_hash not in commit_hashes:
                                 commit_hashes.append(commit_hash)
-                                print(f"   📝 Found JIRA key in commit: {commit_hash[:7]} - {commit_msg[:50]}")
             
-            # Remove duplicates
             commit_hashes = list(dict.fromkeys(commit_hashes))
             
             if commit_hashes:
-                print(f"✅ Found {len(commit_hashes)} commit(s) with JIRA key {self.jira_key}")
-                
-                # Get ALL files changed in those commits
+                print(f"   Found {len(commit_hashes)} commit(s) with JIRA key {self.jira_key}")
                 for commit_hash in commit_hashes:
                     file_cmd = f"git diff-tree --no-commit-id --name-only -r {commit_hash}"
                     file_result = subprocess.run(file_cmd, shell=True, capture_output=True, text=True)
                     for file in file_result.stdout.strip().split('\n'):
                         if file:
                             files_from_jira_commits.add(file)
-                
-                if files_from_jira_commits:
-                    print(f"✅ Will review {len(files_from_jira_commits)} file(s) from commits with JIRA key {self.jira_key}")
-                    print(f"   Files: {', '.join(sorted(list(files_from_jira_commits))[:5])}{'...' if len(files_from_jira_commits) > 5 else ''}")
-            else:
-                # If no commits found with JIRA key, check if branch name or PR title has it
-                # In that case, review all files (might be first commit without JIRA key in message)
-                print(f"⚠️  No commits found with JIRA key {self.jira_key} in commit messages")
-                print(f"   JIRA key found in branch/PR title - will review all files in PR")
         
+        # STEP 3: Process ONLY files that are in the PR diff
+        # CRITICAL: If a file is not in pr_changed_files, it is NEVER reviewed
         file_diffs = []
-        for line in result.stdout.strip().split('\n'):
-            if not line:
+        for filename in sorted(pr_changed_files):
+            # VALIDATION: Ensure file is actually in PR diff
+            if filename not in pr_changed_files:
+                print(f"⏭️  Skipping {filename} (not in PR diff - should never happen)")
                 continue
-                
-            parts = line.split('\t')
-            if len(parts) < 2:
-                continue
-                
-            status = parts[0]
-            filename = parts[1]
             
-            # Skip certain file types
+            status = file_statuses.get(filename, 'M')  # Default to Modified if status unknown
+            
+            # Skip certain file types (CI/CD, docs, generated files, etc.)
             if self._should_skip_file(filename):
+                print(f"⏭️  Skipping {filename} (matches skip patterns)")
                 continue
             
-            # ROBUST: If JIRA key is available, ONLY review files from commits with that JIRA key
-            if self.jira_key:
-                if files_from_jira_commits:
-                    # We have commits with JIRA key - ONLY review files from those commits
-                    # BUT: Still apply skip filters (don't review CI/CD files, docs, etc.)
-                    if filename in files_from_jira_commits:
-                        # This file is from a commit with JIRA key - check if it should be skipped
-                        if self._should_skip_file(filename):
-                            print(f"⏭️  Skipping {filename} (from SEC-402 commit but matches skip patterns)")
-                            continue
-                        # This file is from a commit with JIRA key and should be reviewed
-                        print(f"✅ Including {filename} (from commit with JIRA key {self.jira_key})")
-                    else:
-                        # File not in commits with JIRA key - skip it (don't review unrelated files)
-                        print(f"⏭️  Skipping {filename} (not in commits with JIRA key {self.jira_key})")
-                        continue
+            # Log if file is from JIRA commit (informational)
+            if self.jira_key and files_from_jira_commits:
+                if filename in files_from_jira_commits:
+                    print(f"✅ Including {filename} (in PR diff + from {self.jira_key} commit)")
                 else:
-                    # No commits found with JIRA key in commit messages, but JIRA key exists in branch/PR
-                    # Use file relationship check, but be more permissive for src/ files
-                    if not self._is_file_related_to_jira_ticket(filename):
-                        # Double-check: if file is in src/ and is a code file, review it anyway (case-insensitive)
-                        filename_lower_check = filename.lower()
-                        if filename_lower_check.startswith('src/') and any(
-                            pattern in filename_lower_check for pattern in ['controller', 'service', 'model', 'route', 'handler', 'manager', 'util', 'helper', 'middleware', 'component', 'module']
-                        ):
-                            print(f"✅ Including {filename} (code file in src/ for JIRA {self.jira_key})")
-                        else:
-                            print(f"⏭️  Skipping {filename} (not related to JIRA ticket {self.jira_key})")
-                            continue
+                    print(f"✅ Including {filename} (in PR diff, but not from {self.jira_key} commits)")
+            else:
+                print(f"✅ Including {filename} (in PR diff)")
             
-            # Get the diff for this file
+            # STEP 4: Get the actual diff content for this file (from PR range only)
             diff_cmd = f"git diff {self.base_sha} {self.head_sha} -- {filename}"
-            diff_result = subprocess.run(diff_cmd, shell=True, capture_output=True, text=True)
+            diff_result = subprocess.run(diff_cmd, shell=True, capture_output=True, text=True, check=True)
             
-            # Only include if there are actual changes (not just whitespace)
-            if not diff_result.stdout.strip() or diff_result.stdout.strip() == '':
+            # VALIDATION: Only include if there are actual changes
+            if not diff_result.stdout.strip():
+                print(f"   ⚠️  No diff content for {filename} (skipping)")
                 continue
             
             # Count additions and deletions
             additions = len([l for l in diff_result.stdout.split('\n') if l.startswith('+') and not l.startswith('+++')])
             deletions = len([l for l in diff_result.stdout.split('\n') if l.startswith('-') and not l.startswith('---')])
             
-            # Skip if no actual code changes (only metadata)
+            # Skip if no actual code changes (only metadata/whitespace)
             if additions == 0 and deletions == 0:
+                print(f"   ⚠️  No code changes in {filename} (only metadata, skipping)")
                 continue
             
+            # STEP 5: Add file to review list
+            # This file is confirmed to be:
+            # 1. In the PR diff (base...head)
+            # 2. Not in skip patterns
+            # 3. Has actual code changes
             file_diffs.append(FileDiff(
                 filename=filename,
                 status=status,
@@ -186,6 +185,10 @@ class AICodeReviewer:
                 additions=additions,
                 deletions=deletions
             ))
+        
+        print(f"📊 Final review list: {len(file_diffs)} file(s) to review")
+        if file_diffs:
+            print(f"   Files: {', '.join([f.filename for f in file_diffs[:5]])}{'...' if len(file_diffs) > 5 else ''}")
         
         return file_diffs
     
