@@ -1,5 +1,6 @@
 // Order Controller for SEC-401
 // This code has multiple issues to test all SME feedback checks
+// TEST: Added test comment to trigger GitHub Actions workflow
 
 // Hardcoded API key - should be in config
 const API_KEY = 'sk_live_1234567890abcdef';
