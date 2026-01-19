@@ -1,5 +1,6 @@
 // Profile Controller for SEC-402
 // This code has multiple issues to test all SME feedback checks
+// TEST: Added test comment to verify code review bot works correctly
 
 // Hardcoded API key - should be in config
 const API_KEY = 'sk_live_profile_1234567890';
