@@ -14,7 +14,6 @@ from dataclasses import dataclass
 import requests
 from openai import OpenAI
 from jira_service import JiraService
-from srs_service import SRSService
 
 @dataclass
 class FileDiff:
