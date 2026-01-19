@@ -133,25 +133,20 @@ class AICodeReviewer:
             if self._should_skip_file(filename):
                 continue
             
-            # ROBUST: If JIRA key is available, prioritize files from commits with that JIRA key
+            # ROBUST: If JIRA key is available, ONLY review files from commits with that JIRA key
             if self.jira_key:
                 if files_from_jira_commits:
-                    # We have commits with JIRA key - prioritize files from those commits
+                    # We have commits with JIRA key - ONLY review files from those commits
                     if filename in files_from_jira_commits:
                         # This file is from a commit with JIRA key - definitely review it
                         print(f"✅ Including {filename} (from commit with JIRA key {self.jira_key})")
                     else:
-                        # File not in commits with JIRA key - check if it's still related
-                        # Be permissive: if it's a code file in src/, include it (might be related)
-                        filename_lower_check = filename.lower()
-                        if filename_lower_check.startswith('src/') and any(
-                            pattern in filename_lower_check for pattern in ['controller', 'service', 'model', 'route', 'handler', 'manager', 'util', 'helper', 'middleware', 'component', 'module']
-                        ):
-                            print(f"✅ Including {filename} (code file in src/ - likely related to JIRA {self.jira_key})")
-                        elif self._is_file_related_to_jira_ticket(filename):
+                        # File not in commits with JIRA key - check if it's related to JIRA ticket
+                        # Only include if it's clearly related (not just any src/ file)
+                        if self._is_file_related_to_jira_ticket(filename):
                             print(f"✅ Including {filename} (related to JIRA ticket {self.jira_key})")
                         else:
-                            print(f"⏭️  Skipping {filename} (not in commits with JIRA key {self.jira_key} and not related)")
+                            print(f"⏭️  Skipping {filename} (not in commits with JIRA key {self.jira_key} and not related to ticket)")
                             continue
                 else:
                     # No commits found with JIRA key in commit messages, but JIRA key exists in branch/PR
