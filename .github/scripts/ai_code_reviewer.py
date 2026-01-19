@@ -137,17 +137,18 @@ class AICodeReviewer:
             if self.jira_key:
                 if files_from_jira_commits:
                     # We have commits with JIRA key - ONLY review files from those commits
+                    # BUT: Still apply skip filters (don't review CI/CD files, docs, etc.)
                     if filename in files_from_jira_commits:
-                        # This file is from a commit with JIRA key - definitely review it
+                        # This file is from a commit with JIRA key - check if it should be skipped
+                        if self._should_skip_file(filename):
+                            print(f"⏭️  Skipping {filename} (from SEC-402 commit but matches skip patterns)")
+                            continue
+                        # This file is from a commit with JIRA key and should be reviewed
                         print(f"✅ Including {filename} (from commit with JIRA key {self.jira_key})")
                     else:
-                        # File not in commits with JIRA key - check if it's related to JIRA ticket
-                        # Only include if it's clearly related (not just any src/ file)
-                        if self._is_file_related_to_jira_ticket(filename):
-                            print(f"✅ Including {filename} (related to JIRA ticket {self.jira_key})")
-                        else:
-                            print(f"⏭️  Skipping {filename} (not in commits with JIRA key {self.jira_key} and not related to ticket)")
-                            continue
+                        # File not in commits with JIRA key - skip it (don't review unrelated files)
+                        print(f"⏭️  Skipping {filename} (not in commits with JIRA key {self.jira_key})")
+                        continue
                 else:
                     # No commits found with JIRA key in commit messages, but JIRA key exists in branch/PR
                     # Use file relationship check, but be more permissive for src/ files
