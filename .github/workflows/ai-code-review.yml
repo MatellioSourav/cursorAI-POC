@@ -46,7 +46,8 @@ jobs:
           JIRA_PROJECT_ID: ${{ secrets.JIRA_PROJECT_ID }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
         run: |
-          python .github/scripts/ai_code_reviewer.py
+          cd .github/scripts
+          python ai_code_reviewer.py
           
       - name: Post review summary
         if: always()
