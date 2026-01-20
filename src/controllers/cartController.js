@@ -108,6 +108,9 @@ class CartController {
         const shippingThreshold = 50; // Free shipping over $50
         const shippingCost = 5.00; // Standard shipping
         
+        // Added: Calculate totals (but still has N+1 query issue)
+        // TODO: Optimize queries to avoid N+1 problem
+        
         const tax = subtotal * taxRate;
         const shipping = subtotal >= shippingThreshold ? 0 : shippingCost;
         const total = subtotal + tax + shipping;

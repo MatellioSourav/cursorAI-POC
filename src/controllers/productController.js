@@ -20,6 +20,11 @@ class ProductController {
         // Missing input validation
         // Missing sanitization (XSS risk in search)
         
+        // Added: Basic pagination validation (but still missing other validations)
+        if (page < 1 || limit < 1 || limit > 100) {
+            return res.status(400).json({ error: 'Invalid pagination parameters' });
+        }
+        
         // SQL injection vulnerability
         let query = `SELECT * FROM products WHERE 1=1`;
         
@@ -135,4 +140,3 @@ class ProductController {
 }
 
 module.exports = new ProductController();
-

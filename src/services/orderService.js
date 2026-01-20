@@ -1,6 +1,9 @@
 // Order Service for SEC-407 E-Commerce Application
 // This code has multiple issues to test all SME feedback checks
 
+// Hardcoded payment gateway URL - should be in config
+const PAYMENT_GATEWAY_URL = 'https://api.payment-gateway.com';
+
 class OrderService {
     async createOrder(userId, shippingAddress, paymentMethod) {
         // Swallowed exception (empty catch block)
@@ -101,7 +104,8 @@ class OrderService {
     
     async processPayment(orderId, paymentData) {
         // External API call without retry logic
-        const paymentResult = await fetch(`https://api.payment-gateway.com/charge`, {
+        // Using hardcoded URL instead of config
+        const paymentResult = await fetch(`${PAYMENT_GATEWAY_URL}/charge`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${process.env.PAYMENT_API_KEY || 'hardcoded_key'}`,
