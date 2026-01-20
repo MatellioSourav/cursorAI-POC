@@ -1,292 +1,173 @@
-// Payment Service for SEC-400
-// Implements secure payment processing with proper validation and error handling
+// Payment Service for SEC-406
+// This code has multiple issues to test all SME feedback checks
 
-const logger = require('../utils/logger');
-
-/**
- * Payment Service - Handles payment processing, refunds, and payment history
- * @class PaymentService
- */
 class PaymentService {
-    /**
-     * Process a payment for a user
-     * @param {string} userId - The user ID making the payment
-     * @param {number} amount - Payment amount (must be > 0)
-     * @param {string} paymentMethod - Payment method (credit_card, debit_card, wallet)
-     * @returns {Promise<Object>} Payment result with success status and transaction ID
-     * @throws {Error} If validation fails or payment processing fails
-     */
-    async processPayment(userId, amount, paymentMethod) {
-        // Input validation
-        if (!userId || typeof userId !== 'string') {
-            throw new Error('Invalid user ID');
-        }
-        
-        if (!amount || typeof amount !== 'number' || amount <= 0) {
-            throw new Error('Payment amount must be greater than 0');
-        }
-        
-        const validPaymentMethods = ['credit_card', 'debit_card', 'wallet'];
-        if (!paymentMethod || !validPaymentMethods.includes(paymentMethod)) {
-            throw new Error('Invalid payment method');
-        }
-        
-        // Use parameterized query to prevent SQL injection
-        const user = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
-        
-        if (!user || user.length === 0) {
-            logger.error(`User not found: ${userId}`);
-            throw new Error('User not found');
-        }
-        
-        // Start transaction
-        await db.beginTransaction();
-        
+    async processPayment(paymentData) {
+        // Swallowed exception (empty catch block)
         try {
-            // Process payment through gateway (mock implementation)
-            const gatewayResponse = await this._processPaymentGateway(amount, paymentMethod);
-            
-            if (!gatewayResponse.success) {
-                throw new Error('Payment gateway processing failed');
-            }
-            
-            // Update account balance using parameterized query
-            await db.query(
-                'UPDATE accounts SET balance = balance - ? WHERE user_id = ?',
-                [amount, userId]
-            );
-            
-            // Record payment transaction
-            const paymentRecord = await db.query(
-                'INSERT INTO payments (user_id, amount, payment_method, status, transaction_id) VALUES (?, ?, ?, ?, ?)',
-                [userId, amount, paymentMethod, 'completed', gatewayResponse.transactionId]
-            );
-            
-            // Commit transaction
-            await db.commit();
-            
-            // Log successful payment
-            logger.info(`Payment processed successfully: User ${userId}, Amount ${amount}, Transaction ${gatewayResponse.transactionId}`);
-            
-            // Send payment confirmation (mock)
-            await this._sendPaymentConfirmation(userId, amount, gatewayResponse.transactionId);
-            
-            return {
-                success: true,
-                transactionId: gatewayResponse.transactionId,
-                amount: amount,
-                message: 'Payment processed successfully'
-            };
+            const result = await this.callPaymentGateway(paymentData);
+            return result;
         } catch (error) {
-            // Rollback transaction on failure
-            await db.rollback();
-            logger.error(`Payment processing failed: ${error.message}`, { userId, amount, paymentMethod });
-            throw error;
+            // Empty catch - swallows exception
         }
     }
     
-    /**
-     * Process a refund for a completed payment
-     * @param {string} paymentId - The payment ID to refund
-     * @returns {Promise<Object>} Refund result with success status
-     * @throws {Error} If refund validation fails or processing fails
-     */
-    async refundPayment(paymentId) {
-        // Input validation
-        if (!paymentId || typeof paymentId !== 'string') {
-            throw new Error('Invalid payment ID');
-        }
+    async callPaymentGateway(paymentData) {
+        // External API call without retry logic
+        const response = await fetch(`https://api.stripe.com/v1/charges`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${process.env.STRIPE_API_KEY || 'hardcoded_key'}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(paymentData)
+        });
+        // Missing try/catch
+        // Missing timeout
+        // Missing fallback
+        // Missing retry logic
         
-        // Use parameterized query to prevent SQL injection
-        const payment = await db.query('SELECT * FROM payments WHERE id = ?', [paymentId]);
-        
-        if (!payment || payment.length === 0) {
-            logger.error(`Payment not found: ${paymentId}`);
-            throw new Error('Payment not found');
-        }
-        
-        const paymentData = payment[0];
-        
-        // Validate refund eligibility
-        if (paymentData.status !== 'completed') {
-            throw new Error('Only completed payments can be refunded');
-        }
-        
-        // Start transaction
-        await db.beginTransaction();
-        
+        return response.json();
+    }
+    
+    async getTransactionDetails(transactionId) {
+        // Overly generic exception handling
         try {
-            // Process refund through gateway
-            const refundResponse = await this._processRefundGateway(paymentData.transaction_id, paymentData.amount);
-            
-            if (!refundResponse.success) {
-                throw new Error('Refund processing failed');
-            }
-            
-            // Update account balance
-            await db.query(
-                'UPDATE accounts SET balance = balance + ? WHERE user_id = ?',
-                [paymentData.amount, paymentData.user_id]
+            const transaction = await db.query(
+                `SELECT * FROM transactions WHERE id = ${transactionId}`
             );
-            
-            // Update payment status
-            await db.query(
-                'UPDATE payments SET status = ? WHERE id = ?',
-                ['refunded', paymentId]
-            );
-            
-            // Commit transaction
-            await db.commit();
-            
-            // Log successful refund
-            logger.info(`Refund processed successfully: Payment ${paymentId}, Amount ${paymentData.amount}`);
-            
-            // Send refund confirmation
-            await this._sendRefundConfirmation(paymentData.user_id, paymentData.amount, refundResponse.refundId);
-            
-            return {
-                success: true,
-                refundId: refundResponse.refundId,
-                amount: paymentData.amount,
-                message: 'Refund processed successfully'
-            };
+            return transaction[0];
         } catch (error) {
-            // Rollback transaction on failure
-            await db.rollback();
-            logger.error(`Refund processing failed: ${error.message}`, { paymentId });
-            throw error;
+            // Generic catch - doesn't handle specific error types
+            throw new Error('Something went wrong');
         }
     }
     
-    /**
-     * Get payment history for a user with pagination
-     * @param {string} userId - The user ID
-     * @param {number} page - Page number (default: 1)
-     * @param {number} limit - Records per page (default: 50, max: 50)
-     * @param {string} startDate - Optional start date filter (YYYY-MM-DD)
-     * @param {string} endDate - Optional end date filter (YYYY-MM-DD)
-     * @returns {Promise<Object>} Paginated payment history
-     */
-    async getPaymentHistory(userId, page = 1, limit = 50, startDate = null, endDate = null) {
-        // Input validation
-        if (!userId || typeof userId !== 'string') {
-            throw new Error('Invalid user ID');
-        }
+    async processRefund(transactionId, amount) {
+        // Missing transaction boundary
+        // Multiple DB operations without transaction
         
-        // Validate pagination parameters
-        const pageNum = Math.max(1, parseInt(page) || 1);
-        const pageLimit = Math.min(50, Math.max(1, parseInt(limit) || 50));
-        const offset = (pageNum - 1) * pageLimit;
+        // Operation 1
+        const transaction = await db.query(
+            `SELECT * FROM transactions WHERE id = ${transactionId}`
+        );
         
-        try {
-            // Build query with date filters
-            let query = 'SELECT * FROM payments WHERE user_id = ?';
-            const params = [userId];
-            
-            if (startDate) {
-                query += ' AND created_at >= ?';
-                params.push(startDate);
-            }
-            
-            if (endDate) {
-                query += ' AND created_at <= ?';
-                params.push(endDate);
-            }
-            
-            query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-            params.push(pageLimit, offset);
-            
-            // Use parameterized query to prevent SQL injection
-            const payments = await db.query(query, params);
-            
-            // Get total count for pagination
-            let countQuery = 'SELECT COUNT(*) as total FROM payments WHERE user_id = ?';
-            const countParams = [userId];
-            
-            if (startDate) {
-                countQuery += ' AND created_at >= ?';
-                countParams.push(startDate);
-            }
-            
-            if (endDate) {
-                countQuery += ' AND created_at <= ?';
-                countParams.push(endDate);
-            }
-            
-            const countResult = await db.query(countQuery, countParams);
-            const total = countResult[0].total;
-            
-            // Log payment history access
-            logger.info(`Payment history accessed: User ${userId}, Page ${pageNum}, Limit ${pageLimit}`);
-            
-            return {
-                payments: payments,
-                pagination: {
-                    page: pageNum,
-                    limit: pageLimit,
-                    total: total,
-                    totalPages: Math.ceil(total / pageLimit)
-                }
-            };
-        } catch (error) {
-            logger.error(`Error fetching payment history: ${error.message}`, { userId });
-            throw error;
-        }
+        // Operation 2 - should be in same transaction
+        const refund = await this.callRefundGateway(transaction[0].gateway_charge_id, amount);
+        
+        // Operation 3
+        await db.query(
+            `UPDATE transactions SET status='refunded', refund_amount=${amount} WHERE id=${transactionId}`
+        );
+        
+        // If any operation fails, others are not rolled back
+        return refund;
     }
     
-    /**
-     * Process payment through payment gateway (mock implementation)
-     * @private
-     * @param {number} amount - Payment amount
-     * @param {string} paymentMethod - Payment method
-     * @returns {Promise<Object>} Gateway response
-     */
-    async _processPaymentGateway(amount, paymentMethod) {
-        // Mock gateway integration
-        // In real implementation, this would call actual payment gateway API
-        return {
-            success: true,
-            transactionId: `TXN-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    async callRefundGateway(chargeId, amount) {
+        // Blocking call in async context
+        const refundData = {
+            charge: chargeId,
+            amount: amount * 100
         };
+        
+        // Synchronous blocking operation
+        const refundResult = require('child_process').execSync(
+            `curl -X POST https://api.stripe.com/v1/refunds -d '${JSON.stringify(refundData)}'`
+        );
+        
+        return JSON.parse(refundResult.toString());
     }
     
-    /**
-     * Process refund through payment gateway (mock implementation)
-     * @private
-     * @param {string} transactionId - Original transaction ID
-     * @param {number} amount - Refund amount
-     * @returns {Promise<Object>} Gateway response
-     */
-    async _processRefundGateway(transactionId, amount) {
-        // Mock gateway integration
-        return {
-            success: true,
-            refundId: `REF-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-        };
+    async getTransactionHistory(userId) {
+        // Sequential await in loop (should be parallel if safe)
+        const transactions = await db.query(
+            `SELECT * FROM transactions WHERE user_id = ${userId}`
+        );
+        
+        const history = [];
+        for (let tx of transactions) {
+            const details = await db.query(
+                `SELECT * FROM transaction_details WHERE transaction_id = ${tx.id}`
+            );
+            const items = await db.query(
+                `SELECT * FROM transaction_items WHERE transaction_id = ${tx.id}`
+            );
+            history.push({ transaction: tx, details, items });
+        }
+        
+        // Could be done in parallel with Promise.all()
+        
+        return history;
     }
     
-    /**
-     * Send payment confirmation (mock implementation)
-     * @private
-     * @param {string} userId - User ID
-     * @param {number} amount - Payment amount
-     * @param {string} transactionId - Transaction ID
-     */
-    async _sendPaymentConfirmation(userId, amount, transactionId) {
-        // Mock email/SMS notification
-        logger.info(`Payment confirmation sent to user ${userId}`);
+    async validateWebhook(webhookData, signature) {
+        // Missing webhook signature validation
+        // Weak validation logic
+        
+        // Insecure: Just checking if signature exists
+        if (!signature) {
+            return false;
+        }
+        
+        // Missing proper HMAC validation
+        // Should use crypto.createHmac() with secret
+        
+        return true; // Always returns true - security issue
     }
     
-    /**
-     * Send refund confirmation (mock implementation)
-     * @private
-     * @param {string} userId - User ID
-     * @param {number} amount - Refund amount
-     * @param {string} refundId - Refund ID
-     */
-    async _sendRefundConfirmation(userId, amount, refundId) {
-        // Mock email/SMS notification
-        logger.info(`Refund confirmation sent to user ${userId}`);
+    async updateTransactionStatus(transactionId, status) {
+        // Inconsistent error propagation
+        try {
+            const result = await db.query(
+                `UPDATE transactions SET status='${status}' WHERE id=${transactionId}`
+            );
+            return result;
+        } catch (error) {
+            // Sometimes throws, sometimes returns null - inconsistent
+            if (error.code === 'DB_ERROR') {
+                return null;
+            } else {
+                throw error;
+            }
+        }
+    }
+    
+    // Missing health check
+    // No method to check if payment gateway is healthy
+    
+    // Weak password hashing (if used for authentication)
+    async hashPaymentToken(token) {
+        const crypto = require('crypto');
+        return crypto.createHash('md5').update(token).digest('hex');
+        // MD5 is cryptographically broken
+    }
+    
+    async calculateTotalRevenue(merchantId) {
+        // Missing transaction boundary
+        // Multiple queries without transaction
+        
+        // Query 1
+        const transactions = await db.query(
+            `SELECT * FROM transactions WHERE merchant_id = ${merchantId} AND status = 'completed'`
+        );
+        
+        // Query 2 - N+1 problem
+        let total = 0;
+        for (let tx of transactions) {
+            const fees = await db.query(
+                `SELECT fee_amount FROM transaction_fees WHERE transaction_id = ${tx.id}`
+            );
+            total += tx.amount - (fees[0]?.fee_amount || 0);
+        }
+        
+        // Query 3
+        await db.query(
+            `UPDATE merchant_stats SET total_revenue = ${total} WHERE merchant_id = ${merchantId}`
+        );
+        
+        // If any query fails, others are not rolled back
+        return total;
     }
 }
 
