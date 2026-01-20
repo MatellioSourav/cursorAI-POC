@@ -25,25 +25,29 @@ class ProductController {
             return res.status(400).json({ error: 'Invalid pagination parameters' });
         }
         
-        // SQL injection vulnerability
+        // FIXED: Using parameterized queries to prevent SQL injection
         let query = `SELECT * FROM products WHERE 1=1`;
+        const params = [];
         
         if (category) {
-            query += ` AND category = '${category}'`; // SQL injection
+            query += ` AND category = ?`;
+            params.push(category);
         }
         
         if (search) {
-            query += ` AND name LIKE '%${search}%'`; // SQL injection + XSS risk
+            query += ` AND name LIKE ?`;
+            params.push(`%${search}%`);
         }
         
-        // Missing pagination validation
+        // FIXED: Using parameterized pagination
         const offset = (page - 1) * limit;
-        query += ` LIMIT ${limit} OFFSET ${offset}`; // SQL injection
+        query += ` LIMIT ? OFFSET ?`;
+        params.push(parseInt(limit), parseInt(offset));
         
         // Missing object-level authorization (if needed for admin)
         
-        // N+1 query problem
-        const products = await db.query(query);
+        // FIXED: Using parameterized query
+        const products = await db.query(query, params);
         
         for (let product of products) {
             // Query inside loop - performance issue
@@ -86,9 +90,10 @@ class ProductController {
         
         // Missing input validation
         
-        // SQL injection vulnerability
+        // FIXED: Using parameterized query to prevent SQL injection
         const product = await db.query(
-            `SELECT * FROM products WHERE id = ${productId}`
+            `SELECT * FROM products WHERE id = ?`,
+            [productId]
         );
         
         if (!product.length) {

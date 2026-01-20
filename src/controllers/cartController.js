@@ -17,9 +17,10 @@ class CartController {
         // Missing input validation
         // Missing sanitization
         
-        // SQL injection vulnerability
+        // FIXED: Using parameterized query to prevent SQL injection
         const product = await db.query(
-            `SELECT * FROM products WHERE id = ${productId} AND stock_quantity >= ${quantity}`
+            `SELECT * FROM products WHERE id = ? AND stock_quantity >= ?`,
+            [productId, quantity]
         );
         
         if (!product.length) {
@@ -36,21 +37,24 @@ class CartController {
         // Missing transaction boundary
         // No rollback on error
         
-        // Check if item already in cart
+        // FIXED: Using parameterized queries
         const existingItem = await db.query(
-            `SELECT * FROM cart_items WHERE cart_id = (SELECT id FROM carts WHERE user_id = ${userId}) AND product_id = ${productId}`
+            `SELECT * FROM cart_items WHERE cart_id = (SELECT id FROM carts WHERE user_id = ?) AND product_id = ?`,
+            [userId, productId]
         );
         
         if (existingItem.length) {
-            // Update quantity - SQL injection
+            // FIXED: Using parameterized query
             await db.query(
-                `UPDATE cart_items SET quantity = quantity + ${quantity} WHERE id = ${existingItem[0].id}`
+                `UPDATE cart_items SET quantity = quantity + ? WHERE id = ?`,
+                [quantity, existingItem[0].id]
             );
         } else {
-            // Insert new item - SQL injection
+            // FIXED: Using parameterized query
             await db.query(
                 `INSERT INTO cart_items (cart_id, product_id, quantity, price_at_time) 
-                 VALUES ((SELECT id FROM carts WHERE user_id = ${userId}), ${productId}, ${quantity}, ${product[0].price})`
+                 VALUES ((SELECT id FROM carts WHERE user_id = ?), ?, ?, ?)`,
+                [userId, productId, quantity, product[0].price]
             );
         }
         
@@ -76,9 +80,10 @@ class CartController {
         
         // Missing input validation
         
-        // SQL injection vulnerability
+        // FIXED: Using parameterized query
         const cart = await db.query(
-            `SELECT * FROM carts WHERE user_id = ${userId}`
+            `SELECT * FROM carts WHERE user_id = ?`,
+            [userId]
         );
         
         if (!cart.length) {
@@ -155,9 +160,10 @@ class CartController {
         // User can update any cart item
         
         // Missing transaction boundary
-        // Update quantity - SQL injection
+        // FIXED: Using parameterized query
         await db.query(
-            `UPDATE cart_items SET quantity = ${quantity} WHERE id = ${itemId}`
+            `UPDATE cart_items SET quantity = ? WHERE id = ?`,
+            [quantity, itemId]
         );
         
         // Missing error handling
@@ -174,9 +180,10 @@ class CartController {
         
         // Missing input validation
         
-        // SQL injection vulnerability
+        // FIXED: Using parameterized query
         await db.query(
-            `DELETE FROM cart_items WHERE id = ${itemId}`
+            `DELETE FROM cart_items WHERE id = ?`,
+            [itemId]
         );
         
         // Missing object-level authorization
