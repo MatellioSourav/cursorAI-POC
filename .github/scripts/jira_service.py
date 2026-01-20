@@ -98,8 +98,16 @@ class JiraService:
             print(f"🔍 Fetching JIRA issue {issue_key} from internal API...")
             print(f"   URL: {url}")
             
-            # No authentication needed for internal API
-            response = requests.get(url, timeout=15)
+            # Add authentication token to request
+            headers = {}
+            if self.api_token:
+                # Use Authorization header with token (API expects token directly, not Bearer format)
+                headers['Authorization'] = self.api_token
+                print(f"   ✅ Token present (length: {len(self.api_token)} chars)")
+            else:
+                print(f"   ⚠️  Token is empty or not set!")
+            
+            response = requests.get(url, headers=headers, timeout=15)
             
             if response.status_code == 200:
                 api_response = response.json()
