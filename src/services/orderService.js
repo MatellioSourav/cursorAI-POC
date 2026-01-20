@@ -71,9 +71,7 @@ class OrderService {
     }
     
     async getOrderDetails(orderId, userId) {
-        // Missing object-level authorization check
-        // User can view any order
-        
+        // FIXED: Added object-level authorization check
         // FIXED: Better error handling
         try {
             // FIXED: Using parameterized query
@@ -86,8 +84,10 @@ class OrderService {
                 throw new Error('Order not found');
             }
             
-            // Missing authorization check
-            // if (order[0].user_id !== userId) { throw error }
+            // FIXED: Object-level authorization - user can only view their own orders
+            if (order[0].user_id !== userId) {
+                throw new Error('Unauthorized - cannot access this order');
+            }
             
             // FIXED: Using parameterized query
             const items = await db.query(

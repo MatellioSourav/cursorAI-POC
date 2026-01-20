@@ -76,8 +76,9 @@ class ProductController {
             products: products,
             pagination: {
                 page: parseInt(page),
-                limit: parseInt(limit)
-                // Missing: total, totalPages
+                limit: parseInt(limit),
+                total: total,
+                totalPages: Math.ceil(total / limit)
             }
         });
     }
