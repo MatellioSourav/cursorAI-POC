@@ -41,7 +41,9 @@ class CartController {
         // FIXED: Object-level authorization - user can only add to their own cart
         // (userId is from authenticated session, so already validated)
         
-        // Still missing: Transaction boundary (intentional for bot to flag)
+        // FIXED: Added transaction boundary for atomic operations
+        await db.beginTransaction();
+        try {
         
         // FIXED: Using parameterized queries
         const existingItem = await db.query(

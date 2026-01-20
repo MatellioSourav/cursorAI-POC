@@ -60,11 +60,13 @@ class OrderService {
                 [cart[0].id]
             );
             
-            // If any operation fails, others are not rolled back
+            // FIXED: Commit transaction
+            await db.commit();
             return { orderId: order.insertId, status: 'pending' };
             
         } catch (error) {
-            // FIXED: Proper error handling instead of empty catch
+            // FIXED: Rollback transaction on error
+            await db.rollback();
             console.error('Error creating order:', error.message);
             throw error; // Re-throw to caller
         }
@@ -95,12 +97,18 @@ class OrderService {
                 [orderId]
             );
             
-            // Still has N+1 query problem (intentional - to test bot detection)
-            for (let item of items) {
-                item.product = await db.query(
-                    `SELECT * FROM products WHERE id = ?`,
-                    [item.product_id]
+            // FIXED: Batch query instead of N+1
+            if (items.length > 0) {
+                const productIds = items.map(item => item.product_id);
+                const products = await db.query(
+                    `SELECT * FROM products WHERE id IN (${productIds.map(() => '?').join(',')})`,
+                    productIds
                 );
+                const productMap = new Map(products.map(p => [p.id, p]));
+                
+                items.forEach(item => {
+                    item.product = productMap.get(item.product_id);
+                });
             }
             
             return {

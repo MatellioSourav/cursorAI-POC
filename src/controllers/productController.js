@@ -65,11 +65,12 @@ class ProductController {
         // Missing total count for pagination
         // Missing error handling
         
-        // Logging sensitive data
+        // FIXED: Removed sensitive data from logs
         console.log('Products fetched:', { 
-            query, 
-            apiKey: PRODUCT_API_KEY, 
-            products 
+            count: products.length,
+            page: parseInt(page),
+            limit: parseInt(limit)
+            // Removed: query, apiKey, products data
         });
         
         return res.json({
