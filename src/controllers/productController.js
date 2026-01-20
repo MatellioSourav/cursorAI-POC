@@ -147,3 +147,4 @@ class ProductController {
 }
 
 module.exports = new ProductController();
+// Test change to trigger workflow
