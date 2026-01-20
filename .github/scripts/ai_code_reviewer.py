@@ -58,6 +58,10 @@ class AICodeReviewer:
         self.jira_issue = None
         self.jira_key = None
         
+        # Initialize SRS service
+        self.srs_service = SRSService()
+        self.srs_context = None
+        
     def get_pr_diff(self) -> List[FileDiff]:
         """Get the diff of files changed in the PR"""
         print("🔍 Fetching PR changes...")
@@ -341,8 +345,9 @@ class AICodeReviewer:
         return context
     
     def _build_enhanced_prompt(self, file_diff: FileDiff, file_content: str) -> str:
-        """Build AI prompt with JIRA context if available"""
+        """Build AI prompt with SRS and JIRA context if available"""
         jira_context = self._build_jira_context()
+        srs_context = self.srs_context or ""
         
         # Get list of all changed files for scope check
         changed_files = [fd.filename for fd in getattr(self, '_all_file_diffs', [])]
@@ -360,6 +365,7 @@ class AICodeReviewer:
         # Build base prompt
         prompt = f"""You are a senior code reviewer with 10+ years of experience. Review the following code changes with the rigor and standards expected from a team lead or principal engineer. Provide constructive, specific, and actionable feedback.
 
+{srs_context if srs_context else ""}
 {jira_context if jira_context else ""}
 
 ## CODE CHANGES
@@ -384,6 +390,31 @@ class AICodeReviewer:
 {file_content[:8000]}  # Limited to 8k chars for faster processing
 
 ## REVIEW REQUIREMENTS
+
+"""
+        
+        # Add SRS-specific requirements if SRS is available
+        if srs_context:
+            prompt += """
+**CRITICAL: Code must align with SRS requirements**
+
+1. **SRS Compliance** (HIGHEST PRIORITY):
+   - ✅ Verify implementation matches SRS specifications
+   - ✅ Check all functional requirements from SRS are met
+   - ✅ Verify non-functional requirements (performance, security, scalability) are addressed
+   - ❌ Flag any deviations from SRS requirements
+   - ❌ Flag missing implementations required by SRS
+   - ⚠️  Highlight any assumptions or interpretations that differ from SRS
+
+2. **Architecture Alignment**:
+   - Verify code follows architectural patterns specified in SRS
+   - Check system design aligns with SRS architecture diagrams/descriptions
+   - Flag any architectural violations
+
+3. **Domain Knowledge**:
+   - Use SRS context to understand business rules and domain logic
+   - Verify business logic implementation matches SRS requirements
+   - Flag incorrect business rule implementations
 
 """
         
@@ -1248,6 +1279,11 @@ You review code with the same rigor and standards expected from a senior enginee
         
         summary = f"""# 🤖 AI Code Review Summary"""
         
+        # Add SRS context if available
+        if self.srs_context:
+            summary += f"\n## 📚 SRS Context\n\n"
+            summary += f"{self.srs_service.get_srs_summary()}\n\n"
+        
         # Add JIRA context if available
         if self.jira_issue:
             subtasks = self.jira_issue.get('subtasks', [])
@@ -1507,6 +1543,14 @@ Once a valid JIRA ticket is detected, the AI review will evaluate your code agai
         
         # Get PR info (title, branch)
         self._get_pr_info()
+        
+        # Load SRS documents for project context
+        print("📚 Loading SRS documents for project context...")
+        self.srs_context = self.srs_service.get_srs_context()
+        if self.srs_context:
+            print("✅ SRS context loaded successfully")
+        else:
+            print("ℹ️  No SRS documents found - proceeding without SRS context")
         
         # Detect and fetch JIRA ticket
         if self.jira_service.enabled:
