@@ -4,7 +4,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     branches:
-      - backend_dev
+      - main
 jobs:
   ai-code-review:
     runs-on: ubuntu-latest
