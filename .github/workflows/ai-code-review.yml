@@ -3,6 +3,8 @@ name: AI Code Review
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+    branches:
+      - backend_dev
 jobs:
   ai-code-review:
     runs-on: ubuntu-latest
