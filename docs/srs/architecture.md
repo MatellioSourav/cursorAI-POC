@@ -256,3 +256,4 @@ The AI Code Review Bot follows a **modular, service-oriented architecture** with
 - Issues found count
 - API call success/failure rates
 
+

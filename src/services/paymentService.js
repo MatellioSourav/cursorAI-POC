@@ -3,12 +3,21 @@
 
 class PaymentService {
     async processPayment(paymentData) {
+        // NEW ISSUE: Hardcoded API key (placeholder for testing)
+        const stripeKey = 'sk_test_FAKE_KEY_FOR_TESTING_ONLY_REPLACE_WITH_ENV_VAR';
+        
         // Swallowed exception (empty catch block)
         try {
             const result = await this.callPaymentGateway(paymentData);
             return result;
         } catch (error) {
             // Empty catch - swallows exception
+            // NEW ISSUE: Logging sensitive payment data
+            console.log('Payment failed:', {
+                cardNumber: paymentData.cardNumber,
+                cvv: paymentData.cvv,
+                error: error.message
+            });
         }
     }
     
@@ -80,11 +89,12 @@ class PaymentService {
     }
     
     async getTransactionHistory(userId) {
-        // Sequential await in loop (should be parallel if safe)
+        // NEW ISSUE: SQL injection - direct string interpolation
         const transactions = await db.query(
-            `SELECT * FROM transactions WHERE user_id = ${userId}`
+            `SELECT * FROM transactions WHERE user_id = ${userId} AND status = '${req.query.status || 'completed'}'`
         );
         
+        // Sequential await in loop (should be parallel if safe)
         const history = [];
         for (let tx of transactions) {
             const details = await db.query(
@@ -94,6 +104,12 @@ class PaymentService {
                 `SELECT * FROM transaction_items WHERE transaction_id = ${tx.id}`
             );
             history.push({ transaction: tx, details, items });
+        }
+        
+        // NEW ISSUE: Memory leak - large array without pagination
+        const allTransactions = [];
+        for (let i = 0; i < 1000000; i++) {
+            allTransactions.push({ id: i, data: 'x'.repeat(1000) });
         }
         
         // Could be done in parallel with Promise.all()

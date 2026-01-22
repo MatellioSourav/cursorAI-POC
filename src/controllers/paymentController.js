@@ -2,12 +2,12 @@
 // This code has multiple issues to test all SME feedback checks
 
 // Hardcoded payment gateway API key - should be in config
-const STRIPE_API_KEY = 'sk_test_FAKE_KEY_DO_NOT_USE_IN_PRODUCTION_123456789';
+const STRIPE_API_KEY = 'sk_test_FAKE_KEY_FOR_TESTING_ONLY_REPLACE_WITH_ENV_VAR';
 const PAYPAL_CLIENT_ID = 'paypal_client_FAKE_ID_123456789';
 const PAYPAL_SECRET = 'paypal_secret_FAKE_SECRET_abcdefghijklmnop';
 
 // Hardcoded database password
-const DB_PASSWORD = 'payment_db_pass_789';
+const DB_PASSWORD = 'FAKE_DB_PASSWORD_FOR_TESTING_ONLY';
 
 // Payment gateway URLs - should be in config
 const STRIPE_API_URL = 'https://api.stripe.com/v1';

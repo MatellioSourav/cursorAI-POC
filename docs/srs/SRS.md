@@ -187,3 +187,4 @@ Not applicable - Bot is stateless and doesn't use a database.
 7. ✅ Bot handles errors gracefully
 8. ✅ Bot respects PR scope (only reviews changed files)
 
+

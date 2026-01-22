@@ -327,3 +327,4 @@ JIRA integration enables:
 
 Simply configure the API credentials and the bot will automatically use JIRA tickets for reviews!
 
+

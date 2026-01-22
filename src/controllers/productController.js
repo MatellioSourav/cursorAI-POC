@@ -73,6 +73,16 @@ class ProductController {
             // Removed: query, apiKey, products data
         });
         
+        // NEW ISSUE: Hardcoded secret in response (placeholder for testing)
+        const adminToken = 'FAKE_ADMIN_TOKEN_FOR_TESTING_ONLY';
+        
+        // NEW ISSUE: Unbounded loop risk - no termination check
+        let i = 0;
+        while (i < products.length) {
+            // Missing increment - infinite loop risk
+            products[i].processed = true;
+        }
+        
         return res.json({
             products: products,
             pagination: {
@@ -80,7 +90,9 @@ class ProductController {
                 limit: parseInt(limit),
                 total: total,
                 totalPages: Math.ceil(total / limit)
-            }
+            },
+            // NEW ISSUE: Exposing internal token
+            debug_token: adminToken
         });
     }
     
@@ -124,12 +136,27 @@ class ProductController {
             );
         }
         
+        // NEW ISSUE: SQL injection vulnerability
+        const userInput = req.query.filter || '';
+        const unsafeQuery = await db.query(
+            `SELECT * FROM products WHERE name LIKE '%${userInput}%'`
+        );
+        
+        // NEW ISSUE: Logging sensitive data
+        console.log('Product details accessed:', {
+            productId: productId,
+            userEmail: req.user?.email, // PII exposure
+            internalCode: product[0].internal_code
+        });
+        
         // Returning internal IDs unnecessarily
         return res.json({
             product: product[0],
             relatedProducts: relatedProducts,
             internal_product_code: product[0].internal_code, // Internal ID exposure
-            supplier_info: product[0].supplier_details // Internal data exposure
+            supplier_info: product[0].supplier_details, // Internal data exposure
+            // NEW ISSUE: Exposing database password
+            db_password: process.env.DB_PASSWORD || 'default_pass'
         });
     }
     
