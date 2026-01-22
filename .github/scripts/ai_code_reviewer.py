@@ -1501,10 +1501,12 @@ You review code with the same rigor and standards expected from a senior enginee
         return True
     
     def _post_missing_jira_comment(self):
-        """Post comment asking for JIRA ticket link"""
-        comment_body = """## ⚠️ JIRA Ticket Required
+        """Post comment suggesting JIRA ticket link"""
+        comment_body = """## ℹ️ JIRA Ticket (Optional)
 
-This PR does not have a linked JIRA ticket. Please add a JIRA ticket key to:
+This PR does not have a linked JIRA ticket. The review will proceed without JIRA context.
+
+**To enable JIRA-aware reviews**, add a JIRA ticket key to:
 
 - **PR Title** (e.g., `PROJ-123: Add login feature`)
 - **Branch Name** (e.g., `feature/PROJ-123-login`)
@@ -1552,18 +1554,30 @@ Once a valid JIRA ticket is detected, the AI review will evaluate your code agai
         else:
             print("ℹ️  No SRS documents found - proceeding without SRS context")
         
-        # Detect and fetch JIRA ticket
+        # Detect and fetch JIRA ticket (optional)
+        jira_available = False
         if self.jira_service.enabled:
             print("🔍 JIRA integration enabled - checking for JIRA ticket...")
             jira_available = self._detect_and_fetch_jira_ticket()
             
-            if not jira_available:
-                print("⏭️  Skipping AI review - JIRA ticket required")
-                return
+            if jira_available:
+                print(f"✅ JIRA ticket {self.jira_key} found - will use JIRA context in review")
             else:
-                print(f"✅ JIRA ticket {self.jira_key} found - proceeding with JIRA-aware review")
+                print("ℹ️  No JIRA ticket found - proceeding without JIRA context")
         else:
-            print("ℹ️  JIRA integration not configured - proceeding with standard review")
+            print("ℹ️  JIRA integration not configured - proceeding without JIRA context")
+        
+        # Determine review type
+        if jira_available and self.srs_context:
+            print("📋 Review Mode: JIRA-aware + SRS-aware (Full Context)")
+        elif jira_available:
+            print("📋 Review Mode: JIRA-aware (JIRA context only)")
+        elif self.srs_context:
+            print("📋 Review Mode: SRS-aware (SRS context only)")
+        else:
+            print("📋 Review Mode: Standard Code Review (No additional context)")
+        
+        # Always proceed with review regardless of JIRA/SRS availability
         
         # Delete previous AI comments to prevent email spam
         print("🧹 Cleaning up previous AI comments...")
