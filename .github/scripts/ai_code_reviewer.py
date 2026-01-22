@@ -142,7 +142,7 @@ class AICodeReviewer:
                 else:
                     # No commits found with JIRA key, but JIRA key exists in branch/PR
                     # Only review files that match the JIRA ticket context
-                    # For SEC-400 (payment), only review payment-related files
+                    # Filter files based on ticket topic (e.g., payment, login, profile)
                     if not self._is_file_related_to_jira_ticket(filename):
                         print(f"⏭️  Skipping {filename} (not related to JIRA ticket {self.jira_key})")
                         continue
@@ -151,12 +151,55 @@ class AICodeReviewer:
             diff_cmd = f"git diff {self.base_sha} {self.head_sha} -- {filename}"
             diff_result = subprocess.run(diff_cmd, shell=True, capture_output=True, text=True)
             
-            # Only include if there are actual changes (not just whitespace)
-            if not diff_result.stdout.strip() or diff_result.stdout.strip() == '':
-                print(f"   ⏭️  Skipping {filename} (empty diff)")
-                continue
+            # Check if git diff returned empty - try manual diff generation
+            diff_content = diff_result.stdout.strip()
+            if not diff_content or diff_content == '':
+                # Debug: Check if file exists in both commits
+                check_base = subprocess.run(f"git show {self.base_sha}:{filename}", shell=True, capture_output=True, text=True)
+                check_head = subprocess.run(f"git show {self.head_sha}:{filename}", shell=True, capture_output=True, text=True)
+                
+                base_exists = check_base.returncode == 0
+                head_exists = check_head.returncode == 0
+                
+                if base_exists and head_exists:
+                    # File exists in both, check if they're different
+                    if check_base.stdout == check_head.stdout:
+                        print(f"   ⏭️  Skipping {filename} (content is identical)")
+                        continue
+                    else:
+                        print(f"   ⚠️  {filename} exists in both commits but git diff returned empty")
+                        print(f"      File sizes: base={len(check_base.stdout)}, head={len(check_head.stdout)}")
+                        print(f"      Generating manual diff...")
+                        # Generate diff manually using Python difflib
+                        import difflib
+                        base_lines = check_base.stdout.splitlines(keepends=True)
+                        head_lines = check_head.stdout.splitlines(keepends=True)
+                        diff_lines = list(difflib.unified_diff(
+                            base_lines, head_lines,
+                            fromfile=f'a/{filename}',
+                            tofile=f'b/{filename}',
+                            lineterm=''
+                        ))
+                        if diff_lines:
+                            diff_content = ''.join(diff_lines)
+                            diff_result.stdout = diff_content
+                            print(f"      ✅ Generated manual diff ({len(diff_lines)} lines)")
+                        else:
+                            print(f"   ⏭️  Skipping {filename} (could not generate diff)")
+                            continue
+                elif not base_exists and head_exists:
+                    print(f"   ⚠️  {filename} is new file (not in base commit)")
+                    # New file - use the head content as diff
+                    diff_content = f"new file: {filename}\n{check_head.stdout}"
+                    diff_result.stdout = diff_content
+                elif base_exists and not head_exists:
+                    print(f"   ⏭️  Skipping {filename} (file was deleted)")
+                    continue
+                else:
+                    print(f"   ⏭️  Skipping {filename} (does not exist in either commit)")
+                    continue
             
-            # Count additions and deletions
+            # Count additions and deletions from diff content
             additions = len([l for l in diff_result.stdout.split('\n') if l.startswith('+') and not l.startswith('+++')])
             deletions = len([l for l in diff_result.stdout.split('\n') if l.startswith('-') and not l.startswith('---')])
             
@@ -881,7 +924,7 @@ Format your response as JSON with the following structure:
       {{"criteria": "Criterion text", "status": "✅ Met | ❌ Missing | ⚠️ Partial", "evidence": "Line references"}}
     ],
     "subtask_coverage": [
-      {{"subtask_key": "H30-XXXXX", "status": "✅ Covered | ❌ Missing | ⚠️ Partial", "evidence": "File/line references"}}
+      {{"subtask_key": "PROJECT-123", "status": "✅ Covered | ❌ Missing | ⚠️ Partial", "evidence": "File/line references"}}
     ],
     "final_verdict": "Approve | Changes Requested"
   }},
@@ -1534,11 +1577,11 @@ This PR does not have a linked JIRA ticket. The review will proceed without JIRA
 
 **To enable JIRA-aware reviews**, add a JIRA ticket key to:
 
-- **PR Title** (e.g., `PROJ-123: Add login feature`)
-- **Branch Name** (e.g., `feature/PROJ-123-login`)
-- **Commit Message** (e.g., `PROJ-123: Implement login`)
+- **PR Title** (e.g., `PROJECT-123: Add login feature`)
+- **Branch Name** (e.g., `feature/PROJECT-123-login`)
+- **Commit Message** (e.g., `PROJECT-123: Implement login`)
 
-**JIRA Key Format:** `[A-Z][A-Z0-9]+-[0-9]+` (e.g., `PROJ-123`, `ABC-456`)
+**JIRA Key Format:** `[A-Z][A-Z0-9]+-[0-9]+` (e.g., `PROJECT-123`, `TEAM-456`, `TASK-789`)
 
 Once a valid JIRA ticket is detected, the AI review will evaluate your code against the ticket's requirements and acceptance criteria.
 
