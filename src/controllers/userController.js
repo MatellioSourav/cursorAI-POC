@@ -122,6 +122,46 @@ class UserController {
         // Should use batch update or transaction
         return res.json({ success: true });
     }
+    
+    // NEW METHOD: Additional test issues for code review
+    async exportUserData(req, res) {
+        // Missing authentication
+        // Missing authorization
+        // Missing rate limiting
+        
+        const userId = req.params.userId;
+        
+        // SQL injection vulnerability
+        const userData = await db.query(
+            `SELECT * FROM users WHERE id = ${userId} OR email = '${req.query.email}'`
+        );
+        
+        // Exposing all sensitive data
+        return res.json({
+            user: userData[0],
+            password: userData[0].password_hash, // Should never expose
+            credit_card: userData[0].card_number, // PII exposure
+            ssn: userData[0].ssn, // Critical PII
+            internal_notes: userData[0].admin_notes
+        });
+    }
+    
+    async deleteUser(req, res) {
+        // Missing authentication
+        // Missing authorization check
+        // Missing soft delete option
+        
+        const userId = req.params.userId;
+        
+        // SQL injection
+        await db.query(`DELETE FROM users WHERE id = ${userId}`);
+        
+        // Missing cascade delete handling
+        // Missing transaction boundary
+        // Missing error handling
+        
+        return res.json({ success: true });
+    }
 }
 
 module.exports = new UserController();
