@@ -70,6 +70,18 @@ class AICodeReviewer:
         cmd = f"git diff --name-status {self.base_sha} {self.head_sha}"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         
+        # Debug: Check git diff result
+        if result.returncode != 0:
+            print(f"⚠️  Error running git diff: {result.stderr}")
+            print(f"   Command: {cmd}")
+            return []
+        
+        if not result.stdout.strip():
+            print(f"⚠️  No files found in git diff between {self.base_sha[:7]} and {self.head_sha[:7]}")
+            return []
+        
+        print(f"📋 Found {len(result.stdout.strip().split())} file change(s) in git diff")
+        
         # Get files that were changed in commits with current JIRA key (if available)
         files_from_jira_commits = set()
         if self.jira_key:
@@ -99,7 +111,10 @@ class AICodeReviewer:
                 print(f"   Reviewing all files in PR (JIRA key found in branch/PR title)")
         
         file_diffs = []
-        for line in result.stdout.strip().split('\n'):
+        lines = result.stdout.strip().split('\n')
+        print(f"📋 Processing {len(lines)} file change(s) from git diff")
+        
+        for line in lines:
             if not line:
                 continue
                 
@@ -110,8 +125,11 @@ class AICodeReviewer:
             status = parts[0]
             filename = parts[1]
             
+            print(f"   Checking: {filename} (status: {status})")
+            
             # Skip certain file types
             if self._should_skip_file(filename):
+                print(f"   ⏭️  Skipping {filename} (matches skip patterns)")
                 continue
             
             # If JIRA key is available, only review files from commits with that JIRA key
@@ -135,6 +153,7 @@ class AICodeReviewer:
             
             # Only include if there are actual changes (not just whitespace)
             if not diff_result.stdout.strip() or diff_result.stdout.strip() == '':
+                print(f"   ⏭️  Skipping {filename} (empty diff)")
                 continue
             
             # Count additions and deletions
@@ -143,8 +162,10 @@ class AICodeReviewer:
             
             # Skip if no actual code changes (only metadata)
             if additions == 0 and deletions == 0:
+                print(f"   ⏭️  Skipping {filename} (no additions or deletions)")
                 continue
             
+            print(f"   ✅ Including {filename} (+{additions} -{deletions})")
             file_diffs.append(FileDiff(
                 filename=filename,
                 status=status,
@@ -153,6 +174,7 @@ class AICodeReviewer:
                 deletions=deletions
             ))
         
+        print(f"📊 Final review list: {len(file_diffs)} file(s) to review")
         return file_diffs
     
     def _should_skip_file(self, filename: str) -> bool:
@@ -1423,11 +1445,15 @@ You review code with the same rigor and standards expected from a senior enginee
         summary += "*This review was automatically generated using AI. Please review the suggestions and use your judgment.*\n"
         summary += "\n**Note to Team Lead**: The AI has performed the initial review. Please focus on the critical and warning items, and verify the suggestions align with your project's standards.\n"
         
-        # Save summary to file
-        with open('review_summary.md', 'w', encoding='utf-8') as f:
+        # Save summary to file (in workspace root for workflow to find it)
+        # Script runs from .github/scripts/, so go up 2 levels to workspace root
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        workspace_root = os.path.dirname(os.path.dirname(script_dir))
+        summary_path = os.path.join(workspace_root, 'review_summary.md')
+        with open(summary_path, 'w', encoding='utf-8') as f:
             f.write(summary)
         
-        print("✅ Review summary saved to review_summary.md")
+        print(f"✅ Review summary saved to {summary_path}")
     
     def _get_pr_info(self):
         """Fetch PR title and branch name from GitHub API if not provided"""
