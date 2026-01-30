@@ -1,0 +1,12 @@
+**Security Vulnerabilities:**
+- **CRITICAL**: Check for insecure defaults (e.g., public endpoints without authentication)
+- Flag crypto misuse: weak hashing algorithms (MD5, SHA1), incorrect encryption usage
+- Verify proper use of cryptographic libraries and algorithms
+- Check for command injection patterns (exec, eval, system calls with user input)
+- Flag XSS vulnerabilities in dynamic content rendering
+- Verify proper input encoding/escaping
+- Check for SQL injection vulnerabilities (parameterized queries required)
+- Flag authentication/authorization bypasses
+- Verify secure session management
+- Check for CSRF protection on state-changing operations
+

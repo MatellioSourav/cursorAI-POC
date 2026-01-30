@@ -1,0 +1,14 @@
+**Observability & Operability:**
+- **CRITICAL**: Check for missing or noisy logging (too many logs or no logs at all)
+- Verify appropriate log levels are used (DEBUG, INFO, WARN, ERROR)
+- Flag missing correlation IDs / trace IDs for request tracking
+- Check for missing metrics for critical paths (success/failure rates, latency)
+- Flag missing health checks for new components/services
+- Verify feature flags are used for risky changes (not hard-coded)
+- Verify structured logging format (JSON, key-value pairs)
+- Ensure sensitive data (passwords, tokens, PII) is NOT logged
+- Check log messages are meaningful and include context
+- Verify performance-critical operations are logged
+- Flag console.log statements in production code (should use proper logger)
+- Check logging doesn't create performance bottlenecks
+

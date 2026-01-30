@@ -1,0 +1,12 @@
+**Testing Requirements:**
+- **CRITICAL**: Validate unit tests exist for:
+  * Services and business logic
+  * API endpoints
+  * Critical UI flows/components
+- Add integration tests for complex database interactions
+- Flag missing test coverage for new functionality
+- If business logic changed and no tests were added: ⚠️ WARN explicitly
+- Verify test coverage for new functionality
+- Check if acceptance criteria are testable
+- Flag missing test cases or testability issues
+

@@ -15,6 +15,9 @@ import requests
 from openai import OpenAI
 from jira_service import JiraService
 from srs_service import SRSService
+from profiles.config_loader import ConfigLoader
+from profiles.prompt_builder import PromptBuilder
+from rules.rule_registry import RuleRegistry
 
 @dataclass
 class FileDiff:
@@ -27,11 +30,18 @@ class FileDiff:
 
 @dataclass
 class ReviewComment:
-    """Represents a code review comment"""
+    """
+    Represents a code review comment.
+    
+    NOTE: This is a last-resort fallback buffer only.
+    Used to store comments that failed to post via GitHub API.
+    These are kept for potential future retry or summary inclusion,
+    but are not actively used in the current implementation.
+    """
     file: str
     line: int
     comment: str
-    severity: str  # info, warning, error
+    severity: str  # info, warning, error, critical
 
 class AICodeReviewer:
     """Main class for AI-powered code review"""
@@ -62,6 +72,11 @@ class AICodeReviewer:
         self.srs_service = SRSService()
         self.srs_context = None
         
+        # Initialize project configuration and rule system
+        self.config_loader = ConfigLoader(repo_root='.')
+        self.rule_registry = RuleRegistry()
+        self.prompt_builder = PromptBuilder(self.config_loader, self.rule_registry)
+        
     def get_pr_diff(self) -> List[FileDiff]:
         """Get the diff of files changed in the PR"""
         print("🔍 Fetching PR changes...")
@@ -69,6 +84,20 @@ class AICodeReviewer:
         # Get list of changed files
         cmd = f"git diff --name-status {self.base_sha} {self.head_sha}"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            print(f"⚠️  Error running git diff: {result.stderr}")
+            print(f"   Command: {cmd}")
+            return []
+        
+        if not result.stdout.strip():
+            print(f"⚠️  No files found in git diff between {self.base_sha[:7]} and {self.head_sha[:7]}")
+            return []
+        
+        # Count actual file changes (each line in git diff --name-status is one file)
+        lines = result.stdout.strip().split('\n')
+        total_files_in_diff = len([line for line in lines if line.strip()])
+        print(f"📋 Found {total_files_in_diff} file change(s) in git diff")
         
         # Get files that were changed in commits with current JIRA key (if available)
         files_from_jira_commits = set()
@@ -99,7 +128,10 @@ class AICodeReviewer:
                 print(f"   Reviewing all files in PR (JIRA key found in branch/PR title)")
         
         file_diffs = []
-        for line in result.stdout.strip().split('\n'):
+        # lines already defined above
+        print(f"📋 Processing {len(lines)} file change(s) from git diff")
+        
+        for line in lines:
             if not line:
                 continue
                 
@@ -110,8 +142,11 @@ class AICodeReviewer:
             status = parts[0]
             filename = parts[1]
             
+            print(f"   Checking: {filename} (status: {status})")
+            
             # Skip certain file types
             if self._should_skip_file(filename):
+                print(f"   ⏭️  Skipping {filename} (matches skip patterns)")
                 continue
             
             # If JIRA key is available, only review files from commits with that JIRA key
@@ -124,7 +159,7 @@ class AICodeReviewer:
                 else:
                     # No commits found with JIRA key, but JIRA key exists in branch/PR
                     # Only review files that match the JIRA ticket context
-                    # For SEC-400 (payment), only review payment-related files
+                    # Filter files based on ticket topic (e.g., payment, login, profile)
                     if not self._is_file_related_to_jira_ticket(filename):
                         print(f"⏭️  Skipping {filename} (not related to JIRA ticket {self.jira_key})")
                         continue
@@ -133,18 +168,63 @@ class AICodeReviewer:
             diff_cmd = f"git diff {self.base_sha} {self.head_sha} -- {filename}"
             diff_result = subprocess.run(diff_cmd, shell=True, capture_output=True, text=True)
             
-            # Only include if there are actual changes (not just whitespace)
-            if not diff_result.stdout.strip() or diff_result.stdout.strip() == '':
-                continue
+            # Check if git diff returned empty - try manual diff generation
+            diff_content = diff_result.stdout.strip()
+            if not diff_content or diff_content == '':
+                check_base = subprocess.run(f"git show {self.base_sha}:{filename}", shell=True, capture_output=True, text=True)
+                check_head = subprocess.run(f"git show {self.head_sha}:{filename}", shell=True, capture_output=True, text=True)
+                
+                base_exists = check_base.returncode == 0
+                head_exists = check_head.returncode == 0
+                
+                if base_exists and head_exists:
+                    # File exists in both, check if they're different
+                    if check_base.stdout == check_head.stdout:
+                        print(f"   ⏭️  Skipping {filename} (content is identical)")
+                        continue
+                    else:
+                        print(f"   ⚠️  {filename} exists in both commits but git diff returned empty")
+                        print(f"      File sizes: base={len(check_base.stdout)}, head={len(check_head.stdout)}")
+                        print(f"      Generating manual diff...")
+                        # Generate diff manually using Python difflib
+                        import difflib
+                        base_lines = check_base.stdout.splitlines(keepends=True)
+                        head_lines = check_head.stdout.splitlines(keepends=True)
+                        diff_lines = list(difflib.unified_diff(
+                            base_lines, head_lines,
+                            fromfile=f'a/{filename}',
+                            tofile=f'b/{filename}',
+                            lineterm=''
+                        ))
+                        if diff_lines:
+                            diff_content = ''.join(diff_lines)
+                            diff_result.stdout = diff_content
+                            print(f"      ✅ Generated manual diff ({len(diff_lines)} lines)")
+                        else:
+                            print(f"   ⏭️  Skipping {filename} (could not generate diff)")
+                            continue
+                elif not base_exists and head_exists:
+                    print(f"   ⚠️  {filename} is new file (not in base commit)")
+                    # New file - use the head content as diff
+                    diff_content = f"new file: {filename}\n{check_head.stdout}"
+                    diff_result.stdout = diff_content
+                elif base_exists and not head_exists:
+                    print(f"   ⏭️  Skipping {filename} (file was deleted)")
+                    continue
+                else:
+                    print(f"   ⏭️  Skipping {filename} (does not exist in either commit)")
+                    continue
             
-            # Count additions and deletions
+            # Count additions and deletions from diff content
             additions = len([l for l in diff_result.stdout.split('\n') if l.startswith('+') and not l.startswith('+++')])
             deletions = len([l for l in diff_result.stdout.split('\n') if l.startswith('-') and not l.startswith('---')])
             
             # Skip if no actual code changes (only metadata)
             if additions == 0 and deletions == 0:
+                print(f"   ⏭️  Skipping {filename} (no additions or deletions)")
                 continue
             
+            print(f"   ✅ Including {filename} (+{additions} -{deletions})")
             file_diffs.append(FileDiff(
                 filename=filename,
                 status=status,
@@ -153,6 +233,7 @@ class AICodeReviewer:
                 deletions=deletions
             ))
         
+        print(f"📊 Final review list: {len(file_diffs)} file(s) to review")
         return file_diffs
     
     def _should_skip_file(self, filename: str) -> bool:
@@ -295,9 +376,40 @@ class AICodeReviewer:
         
         return filtered
     
-    def _extract_code_snippet(self, file_content: str, line_number: Optional[int], context: int = 2) -> Optional[str]:
-        """Return code snippet with line numbers around the specified line."""
-        if not isinstance(line_number, int):
+    def _is_valid_code_reference(self, code_reference: str) -> bool:
+        """
+        Validate that code_reference contains actual code, not prose.
+        
+        Rules:
+        - Reject single-line prose descriptions
+        - Accept only content that includes code-like symbols: =, (), {}, :, ;, [], <>, ->, =>
+        - Returns True if valid code, False if prose
+        
+        Args:
+            code_reference: The code reference string to validate
+            
+        Returns:
+            True if code_reference contains actual code, False otherwise
+        """
+        if not code_reference:
+            return False
+        
+        code_reference_stripped = code_reference.strip()
+        if not code_reference_stripped:
+            return False
+        
+        # Check for code-like symbols that indicate actual code
+        code_symbols = ['=', '(', ')', '{', '}', ':', ';', '[', ']', '<', '>', '->', '=>']
+        has_code_symbols = any(symbol in code_reference_stripped for symbol in code_symbols)
+        
+        # Reject if it's just prose (no code symbols and looks like a sentence)
+        is_prose = len(code_reference_stripped.split()) > 0 and not has_code_symbols
+        
+        return has_code_symbols and not is_prose
+    
+    def _extract_code_snippet(self, file_content: str, line_number: Optional[int], context: int = 3) -> Optional[str]:
+        """Return code snippet with line numbers around the specified line. Filters out commented code."""
+        if not isinstance(line_number, int) or not file_content:
             return None
         lines = file_content.splitlines()
         if line_number < 1 or line_number > len(lines):
@@ -307,9 +419,19 @@ class AICodeReviewer:
         end = min(line_number + context, len(lines))
         snippet_lines = []
         for idx in range(start, end):
+            line = lines[idx].rstrip()
+            # Always include the target line, but skip surrounding commented-only lines
+            if idx + 1 != line_number:
+                # Skip lines that are only comments (common patterns: #, //, /*, */)
+                stripped = line.strip()
+                if stripped.startswith('#') or stripped.startswith('//') or stripped.startswith('/*') or stripped.startswith('*'):
+                    continue
             pointer = ">" if (idx + 1) == line_number else " "
-            snippet_lines.append(f"{idx + 1:04d}{pointer} {lines[idx].rstrip()}")
-        return "\n".join(snippet_lines)
+            snippet_lines.append(f"{idx + 1:04d}{pointer} {line}")
+        
+        if snippet_lines:
+            return "\n".join(snippet_lines)
+        return None
 
     def _build_jira_context(self) -> str:
         """Build JIRA context string for AI prompt"""
@@ -345,53 +467,19 @@ class AICodeReviewer:
         return context
     
     def _build_enhanced_prompt(self, file_diff: FileDiff, file_content: str) -> str:
-        """Build AI prompt with SRS and JIRA context if available"""
+        """Build AI prompt using rule-based architecture"""
         jira_context = self._build_jira_context()
         srs_context = self.srs_context or ""
         
-        # Get list of all changed files for scope check
-        changed_files = [fd.filename for fd in getattr(self, '_all_file_diffs', [])]
+        # Use PromptBuilder to dynamically assemble prompt from enabled rules
+        prompt = self.prompt_builder.build_prompt(
+            file_diff=file_diff,
+            file_content=file_content,
+            srs_context=srs_context,
+            jira_context=jira_context
+        )
         
-        # Calculate total PR size across all files
-        total_additions = sum(fd.additions for fd in getattr(self, '_all_file_diffs', []))
-        total_deletions = sum(fd.deletions for fd in getattr(self, '_all_file_diffs', []))
-        total_changes = total_additions + total_deletions
-        
-        # PR size warning
-        pr_size_warning = ""
-        if len(changed_files) > 10 or total_changes > 500:
-            pr_size_warning = "\n⚠️ **PR SIZE WARNING**: This PR is large. Consider breaking it into smaller, focused PRs for easier review."
-        
-        # Build base prompt
-        prompt = f"""You are a senior code reviewer with 10+ years of experience. Review the following code changes with the rigor and standards expected from a team lead or principal engineer. Provide constructive, specific, and actionable feedback.
-
-{srs_context if srs_context else ""}
-{jira_context if jira_context else ""}
-
-## CODE CHANGES
-
-**File:** {file_diff.filename}
-**Status:** {file_diff.status}
-**Changes:** +{file_diff.additions} -{file_diff.deletions}
-
-**All Changed Files in PR:** ({len(changed_files)} files)
-{chr(10).join(f"- {f}" for f in changed_files)}
-
-**PR Size Analysis:**
-- Total files changed: {len(changed_files)}
-- Total lines added: {total_additions}
-- Total lines deleted: {total_deletions}
-- Total changes: {total_changes} lines{pr_size_warning}
-
-**DIFF:**
-{file_diff.patch}
-
-**FULL FILE CONTENT:**
-{file_content[:8000]}  # Limited to 8k chars for faster processing
-
-## REVIEW REQUIREMENTS
-
-"""
+        return prompt
         
         # Add SRS-specific requirements if SRS is available
         if srs_context:
@@ -531,6 +619,8 @@ Please provide a detailed code review focusing on:
    - Flag commented JSX, API logic, SQL queries, or any commented code blocks
    - Suggest using Git history or feature flags instead of commented code
    - Remove commented debugging code, TODO comments with old code, or experimental code
+   - **IMPORTANT**: Do NOT flag hardcoded values, security issues, or other problems that exist ONLY in commented code
+   - Only flag issues in active (non-commented) code
 
 31. **Hard-Coded Values & Configuration**:
    - **CRITICAL**: Move all hard-coded values to config/environment files
@@ -850,7 +940,7 @@ Please provide a detailed code review focusing on:
 Format your response as JSON with the following structure:
 {{
   "overall_assessment": "Brief summary of the changes and compliance with JIRA requirements",
-  "severity": "info|warning|critical",
+  "severity": "error|critical",
   "jira_compliance": {{
     "matches_requirements": true/false,
     "missing_criteria": ["List of missing acceptance criteria"],
@@ -859,24 +949,30 @@ Format your response as JSON with the following structure:
       {{"criteria": "Criterion text", "status": "✅ Met | ❌ Missing | ⚠️ Partial", "evidence": "Line references"}}
     ],
     "subtask_coverage": [
-      {{"subtask_key": "H30-XXXXX", "status": "✅ Covered | ❌ Missing | ⚠️ Partial", "evidence": "File/line references"}}
+      {{"subtask_key": "PROJECT-123", "status": "✅ Covered | ❌ Missing | ⚠️ Partial", "evidence": "File/line references"}}
     ],
     "final_verdict": "Approve | Changes Requested"
   }},
   "issues": [
     {{
-      "line": <line_number or null>,
-      "severity": "info|warning|error",
+      "line": <line_number or null - OPTIONAL: Only provide if 100% confident about exact location. Use null if unsure.>,
+      "severity": "error|critical",
       "category": "requirement|quality|bug|security|performance|boilerplate|design|testing|scope|style|documentation|error_handling|logging|architecture|api|database|concurrency|memory|pr_quality|authorization|external_integration|db_constraints|secrets|pii|error_leakage|duplication|unused_code|commented_code|hardcoded_values|signature|business_logic|async_handling|formatting|frontend_security|test_coverage|insecure_defaults|crypto|input_validation|unbounded_loops|inefficient_data_structures|caching|swallowed_exceptions|error_propagation|thread_safety|api_contract|observability|config_safety",
       "title": "Brief issue title",
-      "description": "Detailed explanation",
-      "suggestion": "Specific recommendation or code example"
+      "description": "Detailed explanation explaining WHY this is a problem. Must include exact code reference (verbatim code snippet or line number).",
+      "suggestion": "Concrete fix recommendation with code example if applicable",
+      "code_reference": "<REQUIRED: Exact verbatim code snippet showing the problematic code. This is mandatory - if you cannot show exact code, omit this issue entirely.>"
     }}
   ],
   "positive_aspects": ["List of good practices found in the code"]
 }}
 
 **IMPORTANT:**
+- **ONLY REPORT CRITICAL/ERROR ISSUES**: Filter out "info" and "warning" severity issues. Only report issues with severity "error" or "critical"
+- **LINE NUMBERS ARE OPTIONAL**: Only provide a line number if you are 100% confident about the exact location. If unsure, use `null`. Code snippets are the primary way to show issues.
+- **IGNORE COMMENTED CODE**: Do NOT flag issues (hardcoded values, security vulnerabilities, etc.) that exist ONLY in commented-out code. Only flag issues in active, executable code
+- **CODE REFERENCE IS MANDATORY**: Every issue MUST include a `code_reference` field with the exact verbatim code showing the problem. If you cannot identify exact code, DO NOT report the issue. The system will extract snippets from line numbers when provided, but you must also include the code in `code_reference`.
+- **DEDUPLICATE**: Do not create multiple issues with the same title (e.g., "Large PR size" should only appear once per file or once overall)
 - If acceptance criteria are missing or violated, mark severity as "error" and set final_verdict to "Changes Requested"
 - **SCOPE DETECTION RULES**: 
   * For authentication/login tickets: Files in paths like `src/controllers/*login*`, `src/services/*auth*`, `src/middleware/*auth*`, `src/routes/*auth*` ARE IN SCOPE
@@ -886,18 +982,12 @@ Format your response as JSON with the following structure:
 - If subtasks are not covered, mark them as "❌ Missing" in subtask_coverage
 - Be specific about which acceptance criteria are met/missing
 - Provide line references for requirement implementation
-- If business logic changed without tests, create a "testing" issue with severity "warning"
 - Set final_verdict to "Changes Requested" if any requirements are missing or incorrect
 - Set final_verdict to "Approve" only if all requirements are met
 
-**OUTPUT FORMAT (Strict Markdown Structure):**
-Your response must include these sections in markdown:
-- ✅ Matches JIRA Requirements
-- ❌ Missing / Incorrect Implementation  
-- ⚠️ Suggestions / Improvements
-- 📋 Acceptance Criteria Checklist
-- 🧾 Subtask Coverage (if subtasks exist)
-- 🔚 Final Verdict (Approve / Changes Requested)
+**OUTPUT FORMAT:**
+Your response must be STRICT JSON only. Do NOT include any markdown sections or formatting outside the JSON structure.
+The JSON object is the complete output - no additional markdown is needed or expected.
 
 Be constructive, specific, and helpful. Focus on meaningful improvements."""
         
@@ -920,22 +1010,8 @@ Be constructive, specific, and helpful. Focus on meaningful improvements."""
         prompt = self._build_enhanced_prompt(file_diff, file_content)
 
         try:
-            # Enhanced system message for JIRA-aware reviews
-            system_message = """You are a senior code reviewer with 10+ years of experience, acting as a team lead or principal engineer. You have deep expertise in:
-- Software engineering best practices and clean code principles
-- Security vulnerabilities and OWASP Top 10
-- Design patterns and architecture
-- Code style, documentation, and maintainability standards
-- Error handling, logging, and observability
-- API design, database optimization, and performance
-- Concurrency, memory management, and resource handling
-- Testing strategies and quality assurance
-
-You review code with the same rigor and standards expected from a senior engineer or team lead. Your reviews are:
-- Constructive and educational (help developers learn)
-- Specific and actionable (provide clear guidance)
-- Balanced (acknowledge good practices, suggest improvements)
-- Professional and respectful (maintain positive team culture)"""
+            # Use fixed baseline persona from PromptBuilder (never changes)
+            system_message = PromptBuilder.BASELINE_PERSONA
             
             if self.jira_issue:
                 system_message += "\n\nYou are also an expert at evaluating code implementations against JIRA ticket requirements and acceptance criteria. You must strictly verify that code changes align with the specified requirements."
@@ -953,46 +1029,67 @@ You review code with the same rigor and standards expected from a senior enginee
             )
             
             review_result = json.loads(response.choices[0].message.content)
+            
+            # Read full file content for snippet extraction (not truncated)
+            full_file_content = None
+            try:
+                with open(file_diff.filename, 'r', encoding='utf-8') as f:
+                    full_file_content = f.read()
+            except:
+                full_file_content = file_content  # Fallback to truncated if file can't be read
+            
             for issue in review_result.get('issues', []):
+                # Normalize severity to lowercase for consistent handling
+                severity = str(issue.get('severity', '')).lower()
+                issue['severity'] = severity
+                
+                # Only process error or critical severity (normalized)
+                if severity not in ['error', 'critical']:
+                    continue
+                
                 line_number = issue.get('line')
-                snippet = self._extract_code_snippet(file_content, line_number)
-                issue['code_snippet'] = snippet
-                issue['line_valid'] = snippet is not None
+                
+                # Extract snippet ONLY if we have a valid line number
+                # Do NOT guess line numbers - this prevents false positives
+                snippet = None
+                if line_number and isinstance(line_number, int) and line_number > 0 and full_file_content:
+                    # Try normal extraction first
+                    snippet = self._extract_code_snippet(full_file_content, line_number, context=3)
+                    
+                    # If that fails, try with larger context (but only if line number is valid)
+                    if not snippet:
+                        snippet = self._extract_code_snippet(full_file_content, line_number, context=5)
+                
+                # Prefer code_reference from AI if available, otherwise use extracted snippet
+                code_reference = issue.get('code_reference', '')
+                
+                # Validate code_reference contains actual code, not prose
+                is_valid_code_reference = self._is_valid_code_reference(code_reference)
+                
+                if code_reference and is_valid_code_reference:
+                    # Use AI-provided code reference as primary source (validated as actual code)
+                    issue['code_snippet'] = code_reference
+                elif snippet:
+                    # Fallback to extracted snippet if AI didn't provide valid code_reference
+                    issue['code_snippet'] = snippet
+                else:
+                    # No valid code available - mark snippet as None
+                    issue['code_snippet'] = None
+                
+                # Mark as valid only if we have code (either from AI or extracted)
+                # This ensures we never post issues without exact code
+                has_code = bool(issue.get('code_snippet'))
+                issue['line_valid'] = has_code and line_number is not None and isinstance(line_number, int) and line_number > 0
+                
+                # Store line number for reference (even if snippet extraction failed)
+                if line_number and isinstance(line_number, int):
+                    issue['line_number'] = line_number
             return review_result
             
         except Exception as e:
             print(f"❌ Error reviewing {file_diff.filename}: {str(e)}")
             return None
     
-    def _build_line_map(self, patch: str) -> Dict[int, int]:
-        """Map actual file line numbers to diff positions for inline comments."""
-        line_map: Dict[int, int] = {}
-        current_line = 0
-        diff_line = 0
-
-        for raw_line in patch.splitlines():
-            if raw_line.startswith('@@'):
-                match = re.search(r'\+(\d+)', raw_line)
-                if match:
-                    current_line = int(match.group(1))
-                    diff_line = 0
-                continue
-            if raw_line.startswith('+++') or raw_line.startswith('---'):
-                continue
-
-            diff_line += 1
-
-            if raw_line.startswith('+'):
-                line_map[current_line] = diff_line
-                current_line += 1
-            elif raw_line.startswith('-'):
-                continue
-            else:
-                line_map[current_line] = diff_line
-                current_line += 1
-
-        return line_map
-
     def _delete_previous_ai_comments(self):
         """Delete previous AI review comments to prevent email spam"""
         try:
@@ -1020,30 +1117,6 @@ You review code with the same rigor and standards expected from a senior enginee
         except Exception as e:
             print(f"⚠️  Could not delete previous comments: {str(e)}")
     
-    def _delete_previous_summary_comment(self):
-        """Delete previous summary comment"""
-        try:
-            # Get all issue comments (summary is posted as issue comment)
-            comments_url = f"https://api.github.com/repos/{self.repo_name}/issues/{self.pr_number}/comments"
-            headers = {
-                'Authorization': f'token {self.github_token}',
-                'Accept': 'application/vnd.github.v3+json'
-            }
-            
-            response = requests.get(comments_url, headers=headers)
-            if response.status_code == 200:
-                comments = response.json()
-                for comment in comments:
-                    # Check if it's an AI summary comment
-                    if '🤖 AI Code Review Summary' in comment.get('body', ''):
-                        delete_url = f"https://api.github.com/repos/{self.repo_name}/issues/comments/{comment['id']}"
-                        delete_response = requests.delete(delete_url, headers=headers)
-                        if delete_response.status_code == 204:
-                            print("🗑️  Deleted previous summary comment")
-                            break
-        except Exception as e:
-            print(f"⚠️  Could not delete previous summary: {str(e)}")
-    
     def post_review_comments(self, file_diff: FileDiff, review: Dict):
         """Post review comments to GitHub PR"""
         if not review or not review.get('issues'):
@@ -1055,9 +1128,55 @@ You review code with the same rigor and standards expected from a senior enginee
             'Accept': 'application/vnd.github.v3+json'
         }
         
-        line_map = self._build_line_map(file_diff.patch)
+        # Track posted comment titles to prevent duplicates (e.g., "Large PR size")
+        posted_titles = set()
 
         for issue in review['issues']:
+            # Normalize severity to lowercase for consistent handling
+            severity = str(issue.get('severity', '')).lower()
+            issue['severity'] = severity
+            
+            # Filter: Only post error/critical severity issues (normalized)
+            if severity not in ['error', 'critical']:
+                continue
+            
+            # CRITICAL: Never post issues without code snippets or code_reference
+            # This prevents false positives and ensures developers can see exact problematic code
+            snippet = issue.get('code_snippet')
+            code_reference = issue.get('code_reference', '')
+            if not snippet and not code_reference:
+                print(f"⏭️  Skipping issue '{issue.get('title', 'Unknown')}' - no code snippet or code_reference available")
+                continue
+            
+            # Use code_reference if available and valid, otherwise use snippet
+            # Validate code_reference contains actual code, not prose
+            is_valid_code_reference = self._is_valid_code_reference(code_reference)
+            
+            if code_reference and is_valid_code_reference and not snippet:
+                snippet = code_reference
+                issue['code_snippet'] = code_reference
+            elif not snippet:
+                # If code_reference was invalid prose, reject it and require snippet
+                print(f"⏭️  Skipping issue '{issue.get('title', 'Unknown')}' - code_reference is prose, not actual code")
+                continue
+            
+            # Validate all required fields before posting
+            required_fields = ['title', 'description', 'category', 'severity', 'suggestion']
+            missing_fields = [field for field in required_fields if not issue.get(field)]
+            if missing_fields:
+                print(f"⏭️  Skipping issue '{issue.get('title', 'Unknown')}' - missing required fields: {', '.join(missing_fields)}")
+                continue
+            
+            # Ensure code reference exists (either snippet or code_reference)
+            if not snippet:
+                print(f"⏭️  Skipping issue '{issue.get('title', 'Unknown')}' - no code reference available")
+                continue
+            
+            # Deduplicate: Skip if we've already posted this exact title
+            issue_title = issue.get('title', '')
+            if issue_title in posted_titles:
+                continue
+            posted_titles.add(issue_title)
             # Create comment body
             emoji_map = {
                 'quality': '🎨',
@@ -1072,34 +1191,59 @@ You review code with the same rigor and standards expected from a senior enginee
             severity_emoji = {
                 'info': 'ℹ️',
                 'warning': '⚠️',
-                'error': '🔴'
+                'error': '🔴',
+                'critical': '🚨'
             }
             
             emoji = emoji_map.get(issue.get('category', ''), '💡')
             severity = severity_emoji.get(issue.get('severity', 'info'), 'ℹ️')
             
+            # Snippet is guaranteed to exist here (checked above)
+            snippet = issue.get('code_snippet')
+            line_number = issue.get('line') or issue.get('line_number')
+            
+            # Build comment body with snippet as primary reference
             comment_body = f"""{emoji} **{issue['title']}** {severity}
 
 **Category**: {issue.get('category', 'general')}
-
-{issue['description']}
+**File**: `{file_diff.filename}`
+"""
+            if line_number:
+                comment_body += f"**Location**: Line {line_number}\n\n"
+            
+            comment_body += f"""{issue['description']}
 
 **Suggestion**:
 {issue.get('suggestion', 'No specific suggestion provided')}
 
+**Code Snippet:**
+```{file_diff.filename.split('.')[-1] if '.' in file_diff.filename else ''}
+{snippet}
+```
+
 ---
 *🤖 Generated by AI Code Reviewer*
 """
-            snippet = issue.get('code_snippet')
-            if snippet:
-                comment_body += f"\n**Code context:**\n```\n{snippet}\n```\n"
             
-            # Try to find the specific line in the diff
-            line_number = issue.get('line')
+            # Get line number from issue (snippet is already validated above)
+            line_number = issue.get('line') or issue.get('line_number')
             line_valid = issue.get('line_valid', False)
-            mapped_line = line_map.get(line_number) if isinstance(line_number, int) else None
+            
+            # For inline comments, we need: valid line number, snippet exists, and line exists in file
+            # Snippet is guaranteed to exist here (checked in the filter above)
+            line_exists_in_file = False
+            if line_number and isinstance(line_number, int) and line_valid:
+                try:
+                    with open(file_diff.filename, 'r', encoding='utf-8') as f:
+                        lines = f.read().splitlines()
+                        if 1 <= line_number <= len(lines):
+                            line_exists_in_file = True
+                except:
+                    pass
 
-            if line_number and line_valid:
+            # Post as inline comment only if we have valid line number, snippet, and line exists
+            # This ensures inline comments always show exact code
+            if line_number and line_valid and line_exists_in_file and snippet:
                 # Post as inline comment
                 comment_data = {
                     'body': comment_body,
@@ -1110,12 +1254,48 @@ You review code with the same rigor and standards expected from a senior enginee
                 }
                 
                 try:
-                    response = requests.post(github_api_url, headers=headers, json=comment_data)
+                    response = requests.post(github_api_url, headers=headers, json=comment_data, timeout=10)
                     if response.status_code == 201:
                         print(f"✅ Posted comment on {file_diff.filename}:{line_number}")
                     else:
-                        print(f"⚠️  Failed to post inline comment: {response.status_code}")
-                        # Fall back to storing for summary
+                        error_msg = response.text[:200] if response.text else "No error message"
+                        print(f"⚠️  Failed to post inline comment: {response.status_code} - {error_msg}")
+                        # Fall back to posting as general PR comment
+                        print(f"   Attempting to post as general PR comment instead...")
+                        general_comment_url = f"https://api.github.com/repos/{self.repo_name}/issues/{self.pr_number}/comments"
+                        general_response = requests.post(general_comment_url, headers=headers, json={'body': comment_body}, timeout=10)
+                        if general_response.status_code == 201:
+                            print(f"✅ Posted as general PR comment for {file_diff.filename}")
+                        else:
+                            print(f"⚠️  Also failed to post general comment: {general_response.status_code}")
+                            # Store for summary as last resort
+                            self.review_comments.append(ReviewComment(
+                                file=file_diff.filename,
+                                line=line_number or 0,
+                                comment=comment_body,
+                                severity=issue.get('severity', 'info')
+                            ))
+                except Exception as e:
+                    print(f"⚠️  Error posting comment: {str(e)}")
+                    # Try general comment as fallback
+                    try:
+                        general_comment_url = f"https://api.github.com/repos/{self.repo_name}/issues/{self.pr_number}/comments"
+                        requests.post(general_comment_url, headers=headers, json={'body': comment_body}, timeout=10)
+                        print(f"✅ Posted as general PR comment (fallback) for {file_diff.filename}")
+                    except:
+                        pass
+            else:
+                # Fallback: Post as general PR comment if line is invalid
+                print(f"⚠️  Issue for {file_diff.filename} at line {line_number} could not be matched precisely. Posting as general PR comment.")
+                general_comment_url = f"https://api.github.com/repos/{self.repo_name}/issues/{self.pr_number}/comments"
+                general_comment_data = {'body': comment_body}
+                try:
+                    response = requests.post(general_comment_url, headers=headers, json=general_comment_data, timeout=10)
+                    if response.status_code == 201:
+                        print(f"✅ Posted general comment for {file_diff.filename}")
+                    else:
+                        print(f"⚠️  Failed to post general comment: {response.status_code}")
+                        # Store for summary as last resort
                         self.review_comments.append(ReviewComment(
                             file=file_diff.filename,
                             line=line_number or 0,
@@ -1123,16 +1303,14 @@ You review code with the same rigor and standards expected from a senior enginee
                             severity=issue.get('severity', 'info')
                         ))
                 except Exception as e:
-                    print(f"⚠️  Error posting comment: {str(e)}")
-            else:
-                note = "Line could not be matched precisely; including in summary instead."
-                comment_body += f"\n_{note}_\n"
-                self.review_comments.append(ReviewComment(
-                    file=file_diff.filename,
-                    line=line_number or 0,
-                    comment=comment_body,
-                    severity=issue.get('severity', 'info')
-                ))
+                    print(f"⚠️  Error posting general comment: {str(e)}")
+                    # Store for summary as last resort
+                    self.review_comments.append(ReviewComment(
+                        file=file_diff.filename,
+                        line=line_number or 0,
+                        comment=comment_body,
+                        severity=issue.get('severity', 'info')
+                    ))
     
     def _should_request_changes(self, file_reviews: List[tuple]) -> bool:
         """Determine if PR should be marked as 'Changes Requested' based on AI final verdict"""
@@ -1258,24 +1436,26 @@ You review code with the same rigor and standards expected from a senior enginee
         """Generate a summary of the entire review"""
         print("📊 Generating review summary...")
         
-        total_files = len(file_reviews)
-        total_issues = sum(len(review.get('issues', [])) for _, review in file_reviews if review)
+        # Only count files that were actually reviewed (not skipped)
+        total_files = len([fd for fd, review in file_reviews if review])
         
+        # Filter: Only count error/critical issues (exclude info and warning)
+        all_issues = []
+        for _, review in file_reviews:
+            if review:
+                for issue in review.get('issues', []):
+                    if issue.get('severity') in ['error', 'critical']:
+                        all_issues.append(issue)
+        
+        total_issues = len(all_issues)
+        
+        # Count both 'error' and 'critical' severities as critical issues
         critical_count = sum(
-            1 for _, review in file_reviews if review 
-            for issue in review.get('issues', []) 
-            if issue.get('severity') == 'error'
+            1 for issue in all_issues
+            if issue.get('severity') in ['error', 'critical']
         )
-        warning_count = sum(
-            1 for _, review in file_reviews if review 
-            for issue in review.get('issues', []) 
-            if issue.get('severity') == 'warning'
-        )
-        info_count = sum(
-            1 for _, review in file_reviews if review 
-            for issue in review.get('issues', []) 
-            if issue.get('severity') == 'info'
-        )
+        warning_count = 0  # Not showing warnings anymore
+        info_count = 0  # Not showing info anymore
         
         summary = f"""# 🤖 AI Code Review Summary"""
         
@@ -1302,10 +1482,10 @@ You review code with the same rigor and standards expected from a senior enginee
         summary += f"""
 ## Overview
 - **Files Reviewed**: {total_files}
-- **Total Issues Found**: {total_issues}
+- **Critical Issues Found**: {total_issues}
   - 🔴 Critical: {critical_count}
-  - ⚠️  Warnings: {warning_count}
-  - ℹ️  Info: {info_count}
+
+**Note**: Only critical/error issues are shown. Info and warning issues are excluded from this review.
 
 """
         
@@ -1423,11 +1603,18 @@ You review code with the same rigor and standards expected from a senior enginee
         summary += "*This review was automatically generated using AI. Please review the suggestions and use your judgment.*\n"
         summary += "\n**Note to Team Lead**: The AI has performed the initial review. Please focus on the critical and warning items, and verify the suggestions align with your project's standards.\n"
         
-        # Save summary to file
-        with open('review_summary.md', 'w', encoding='utf-8') as f:
+        # Save summary to file (in workspace root for workflow to find it)
+        # Script runs from .github/scripts/, so go up 2 levels to workspace root
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        workspace_root = os.path.dirname(os.path.dirname(script_dir))
+        summary_path = os.path.join(workspace_root, 'review_summary.md')
+        with open(summary_path, 'w', encoding='utf-8') as f:
             f.write(summary)
         
-        print("✅ Review summary saved to review_summary.md")
+        print(f"✅ Review summary saved to {summary_path}")
+        
+        # Note: Summary is posted by GitHub Actions workflow step
+        # Removed duplicate posting to prevent double comments
     
     def _get_pr_info(self):
         """Fetch PR title and branch name from GitHub API if not provided"""
@@ -1501,16 +1688,18 @@ You review code with the same rigor and standards expected from a senior enginee
         return True
     
     def _post_missing_jira_comment(self):
-        """Post comment asking for JIRA ticket link"""
-        comment_body = """## ⚠️ JIRA Ticket Required
+        """Post comment suggesting JIRA ticket link"""
+        comment_body = """## ℹ️ JIRA Ticket (Optional)
 
-This PR does not have a linked JIRA ticket. Please add a JIRA ticket key to:
+This PR does not have a linked JIRA ticket. The review will proceed without JIRA context.
 
-- **PR Title** (e.g., `PROJ-123: Add login feature`)
-- **Branch Name** (e.g., `feature/PROJ-123-login`)
-- **Commit Message** (e.g., `PROJ-123: Implement login`)
+**To enable JIRA-aware reviews**, add a JIRA ticket key to:
 
-**JIRA Key Format:** `[A-Z][A-Z0-9]+-[0-9]+` (e.g., `PROJ-123`, `ABC-456`)
+- **PR Title** (e.g., `PROJECT-123: Add login feature`)
+- **Branch Name** (e.g., `feature/PROJECT-123-login`)
+- **Commit Message** (e.g., `PROJECT-123: Implement login`)
+
+**JIRA Key Format:** `[A-Z][A-Z0-9]+-[0-9]+` (e.g., `PROJECT-123`, `TEAM-456`, `TASK-789`)
 
 Once a valid JIRA ticket is detected, the AI review will evaluate your code against the ticket's requirements and acceptance criteria.
 
@@ -1552,23 +1741,35 @@ Once a valid JIRA ticket is detected, the AI review will evaluate your code agai
         else:
             print("ℹ️  No SRS documents found - proceeding without SRS context")
         
-        # Detect and fetch JIRA ticket
+        # Detect and fetch JIRA ticket (optional)
+        jira_available = False
         if self.jira_service.enabled:
             print("🔍 JIRA integration enabled - checking for JIRA ticket...")
             jira_available = self._detect_and_fetch_jira_ticket()
             
-            if not jira_available:
-                print("⏭️  Skipping AI review - JIRA ticket required")
-                return
+            if jira_available:
+                print(f"✅ JIRA ticket {self.jira_key} found - will use JIRA context in review")
             else:
-                print(f"✅ JIRA ticket {self.jira_key} found - proceeding with JIRA-aware review")
+                print("ℹ️  No JIRA ticket found - proceeding without JIRA context")
         else:
-            print("ℹ️  JIRA integration not configured - proceeding with standard review")
+            print("ℹ️  JIRA integration not configured - proceeding without JIRA context")
+        
+        # Determine review type
+        if jira_available and self.srs_context:
+            print("📋 Review Mode: JIRA-aware + SRS-aware (Full Context)")
+        elif jira_available:
+            print("📋 Review Mode: JIRA-aware (JIRA context only)")
+        elif self.srs_context:
+            print("📋 Review Mode: SRS-aware (SRS context only)")
+        else:
+            print("📋 Review Mode: Standard Code Review (No additional context)")
+        
+        # Always proceed with review regardless of JIRA/SRS availability
         
         # Delete previous AI comments to prevent email spam
         print("🧹 Cleaning up previous AI comments...")
         self._delete_previous_ai_comments()
-        self._delete_previous_summary_comment()
+        # Note: Summary comment management is handled by GitHub Actions workflow
         
         # Get PR diff
         file_diffs = self.get_pr_diff()

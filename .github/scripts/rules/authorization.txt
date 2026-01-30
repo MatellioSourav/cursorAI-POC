@@ -1,0 +1,12 @@
+**Authorization - Object-Level Access Control:**
+- **CRITICAL**: When endpoints access user/customer/tenant data, verify object-level authorization is enforced
+- Flag endpoints that query user data without proper authorization checks (e.g., missing WHERE user_id = ? or tenant_id = ?)
+- Check for authorization middleware/checks before data access operations
+- Verify that users can only access their own records (not other users' data)
+- Flag missing authorization checks in:
+  * GET endpoints that return user-specific data
+  * UPDATE/DELETE operations on user records
+  * Any query that filters by user_id, customer_id, tenant_id without validation
+- Ensure authorization happens server-side, not just client-side
+- Check for proper role-based access control (RBAC) when applicable
+

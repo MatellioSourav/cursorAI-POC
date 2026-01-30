@@ -1,0 +1,17 @@
+**API Design & Contract Consistency:**
+- **CRITICAL**: Flag breaking API changes without versioning
+- Check for backward compatibility issues (removed fields, changed types, etc.)
+- Verify consistent request/response shapes across similar endpoints
+- Flag missing validation annotations (required fields, data types, constraints)
+- Check for DTO vs domain leakage (domain objects exposed directly in API responses)
+- Flag incorrect default values in API responses or request handling
+- Validate RESTful API conventions (HTTP methods, status codes, URLs)
+- Check API versioning strategy is followed
+- Verify request/response validation
+- Ensure consistent API response format (success/error structure)
+- Check API documentation is complete and accurate
+- Verify proper HTTP status codes are used (200, 201, 400, 401, 404, 500, etc.)
+- Flag missing input validation on API endpoints
+- Check rate limiting is properly implemented
+- Verify API endpoints follow naming conventions
+

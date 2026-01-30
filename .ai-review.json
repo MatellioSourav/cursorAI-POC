@@ -1,0 +1,34 @@
+{
+  "enabled_categories": [
+    "security",
+    "authorization",
+    "secrets",
+    "pii",
+    "error_leakage",
+    "sql_injection",
+    "xss",
+    "input_validation",
+    "error_handling",
+    "performance",
+    "database",
+    "api",
+    "logging",
+    "testing",
+    "unused_code",
+    "hardcoded_values",
+    "async_handling",
+    "code_quality"
+  ],
+  "strictness": "standard",
+  "security_level": "high",
+  "custom_rules": [
+    {
+      "description": "Example custom rule: All API endpoints must have rate limiting",
+      "checks": [
+        "Check for rate limiting middleware on all public endpoints",
+        "Verify rate limits are configured appropriately"
+      ]
+    }
+  ]
+}
+

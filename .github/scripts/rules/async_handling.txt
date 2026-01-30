@@ -1,0 +1,14 @@
+**Promises & Async Handling:**
+- **CRITICAL**: Proper async/await and promise handling
+- Node.js:
+  * Flag wrapping synchronous logic inside new Promise() (unnecessary)
+  * Use async/await consistently (avoid mixing with .then())
+  * Flag sequential await calls in loops when parallel execution is safe (use Promise.all)
+  * Always handle Promise rejections (missing .catch() or try/catch)
+  * Flag unhandled promise rejections
+- FastAPI/Python:
+  * Use async endpoints only when I/O-bound operations exist
+  * Flag blocking calls inside async routes
+  * Ensure DB sessions are properly closed or scoped
+  * Verify proper async context management
+
