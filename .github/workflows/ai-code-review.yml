@@ -56,8 +56,12 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            if (fs.existsSync('review_summary.md')) {
-              const summary = fs.readFileSync('review_summary.md', 'utf8');
+            const path = require('path');
+            // Summary is saved to workspace root, not in .github/scripts/
+            const summaryPath = path.join(process.env.GITHUB_WORKSPACE, 'review_summary.md');
+            
+            if (fs.existsSync(summaryPath)) {
+              const summary = fs.readFileSync(summaryPath, 'utf8');
               
               // Delete previous summary comments to prevent email spam
               const comments = await github.rest.issues.listComments({
@@ -83,5 +87,7 @@ jobs:
                 repo: context.repo.repo,
                 body: summary
               });
+            } else {
+              console.log('⚠️  review_summary.md not found at:', summaryPath);
             }
 

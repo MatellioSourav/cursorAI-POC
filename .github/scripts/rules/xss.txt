@@ -1,0 +1,8 @@
+**XSS (Cross-Site Scripting) Prevention:**
+- **CRITICAL**: Flag unescaped user input rendered in HTML/JSX
+- Verify proper input sanitization before rendering
+- Check for XSS vulnerabilities in dynamic content rendering
+- Flag use of dangerouslySetInnerHTML without sanitization
+- Verify proper input encoding/escaping for HTML, JavaScript, and URL contexts
+- Check for reflected XSS in URL parameters or form inputs
+

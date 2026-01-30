@@ -1,0 +1,15 @@
+**Performance & Scalability:**
+- **CRITICAL**: Flag unbounded loops or recursion risks (missing termination conditions)
+- Check for inefficient data structures (using array when Set/Map needed, etc.)
+- Flag repeated expensive calls (DB, API, filesystem) that could be cached
+- Identify missing caching opportunities for frequently accessed data
+- Flag large object creation inside loops (should be created outside)
+- Check for memory-intensive operations in loops
+- Verify proper use of pagination for large datasets
+- Flag database queries inside for loops (use bulk operations instead)
+- Prefer bulk inserts, joins, IN queries, and set-based operations
+- Flag N+1 query problems (use eager loading or batch queries)
+- Verify indexes exist for frequently filtered columns
+- Flag sequential await calls in loops when parallel execution is safe
+- Check for missing database query optimization
+

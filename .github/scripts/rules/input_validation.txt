@@ -1,0 +1,11 @@
+**Input Validation:**
+- **CRITICAL**: Validate and sanitize all user inputs
+- Flag missing input validation on API endpoints
+- Verify proper validation annotations (required fields, data types, constraints)
+- Check for missing request payload validation (should use DTOs/Pydantic models)
+- Flag client-side validation without server-side validation
+- Verify input validation happens before processing
+- Check for type coercion issues
+- Flag missing bounds checking for numeric inputs
+- Verify file upload validation (type, size, content)
+

@@ -1,0 +1,22 @@
+**Sensitive Data & PII Exposure:**
+- **CRITICAL**: Prevent PII and sensitive data exposure in APIs and logs
+- Flag unnecessary PII in API responses:
+  * Email addresses (unless required)
+  * Phone numbers (unless required)
+  * PAN numbers (Indian tax ID pattern)
+  * Aadhaar numbers (12-digit pattern)
+  * Full addresses (unless required)
+  * Date of birth
+  * Social Security Numbers (SSN patterns)
+- Detect and flag sensitive data in logs:
+  * Passwords (password, pwd, passwd in log messages)
+  * Tokens (token, jwt, access_token, refresh_token)
+  * OTP codes (otp, verification[_-]?code)
+  * Credit card numbers (pattern detection)
+  * PAN/Aadhaar numbers
+  * API keys or secrets
+- Flag storing secrets in plain text anywhere (database, files, variables)
+- Check for sensitive fields in API response objects, log statements, error messages, debug output
+- Verify data masking/redaction for sensitive fields in logs
+- Flag unnecessary sensitive fields returned in GET responses
+

@@ -158,3 +158,4 @@ The following SRS documents provide project requirements and specifications:
         rel_paths = [os.path.relpath(f, os.getcwd()) for f in srs_files]
         return f"Found {len(srs_files)} SRS document(s): {', '.join(rel_paths[:3])}{'...' if len(rel_paths) > 3 else ''}"
 
+

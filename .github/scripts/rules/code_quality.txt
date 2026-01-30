@@ -1,0 +1,11 @@
+**Code Quality:**
+- Best practices, clean code principles, maintainability
+- Code formatting consistency (indentation, spacing, brackets)
+- Validate naming conventions (camelCase, PascalCase, snake_case, kebab-case) match project standards
+- Verify file organization and structure follows project conventions
+- Check import/require ordering and grouping
+- Flag inconsistent coding styles across files
+- Ensure code follows language-specific style guides (ESLint, Prettier, PEP 8, etc.)
+- Flag code duplication that should be extracted into reusable components/services
+- Suggest better architectural patterns if applicable
+

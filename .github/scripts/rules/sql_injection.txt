@@ -1,0 +1,8 @@
+**SQL Injection Prevention:**
+- **CRITICAL**: Flag SQL queries constructed with string concatenation or interpolation
+- Require parameterized queries or ORM query builders
+- Flag direct use of user input in SQL strings
+- Verify all database queries use prepared statements or ORM methods
+- Check for dynamic SQL construction without proper sanitization
+- Flag raw SQL queries that include user-controlled data
+

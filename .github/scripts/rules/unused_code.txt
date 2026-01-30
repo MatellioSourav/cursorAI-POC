@@ -1,0 +1,9 @@
+**Unused Code & Imports:**
+- **CRITICAL**: Flag unused variables, imports, and dead code
+- React: Flag unused useState, useEffect, props, and imports
+- Flag unnecessary state when values can be computed/derived
+- Clean up unused dependencies in effect hooks
+- Backend: Flag unused variables, imports, and unused ORM models/relationships
+- Remove unused functions, classes, and modules
+- Flag unused parameters in function signatures
+

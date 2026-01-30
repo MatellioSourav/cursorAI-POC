@@ -1,0 +1,15 @@
+**Error Handling - No Internal Leakage:**
+- **CRITICAL**: Ensure error responses don't leak internal system details
+- Flag raw exception messages sent to clients (error.message, error.stack)
+- Check for stack traces in API responses
+- Verify detailed error objects are not exposed to end users
+- Flag database error messages exposed to clients (should be sanitized)
+- Ensure error responses are user-friendly and don't reveal:
+  * Stack traces
+  * File paths
+  * Database connection strings
+  * Internal system architecture
+  * Code structure or variable names
+- Verify error logging happens server-side (detailed errors in logs, not responses)
+- Check for proper error sanitization before sending to client
+

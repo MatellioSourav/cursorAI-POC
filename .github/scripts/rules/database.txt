@@ -1,0 +1,15 @@
+**Database Correctness & Constraints:**
+- **CRITICAL**: Flag missing database constraints and optimizations
+- Check for missing indexes on frequently queried columns (especially in WHERE clauses)
+- Flag UPDATE/DELETE queries without WHERE clauses (prevents accidental mass updates)
+- Verify transaction boundaries for multi-step database operations
+- Check for missing foreign key constraints (if schema context available)
+- Flag queries that could cause data integrity issues
+- Verify proper use of database transactions for atomic operations
+- Check for missing unique constraints on columns that should be unique
+- Flag N+1 query problems
+- Verify proper connection pooling usage
+- Check for SQL injection vulnerabilities (parameterized queries)
+- Verify transaction management is correct
+- Flag queries that fetch unnecessary data (SELECT *)
+

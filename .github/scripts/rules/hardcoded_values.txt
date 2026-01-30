@@ -1,0 +1,8 @@
+**Hard-Coded Values & Configuration:**
+- **CRITICAL**: Move all hard-coded values to config/environment files
+- Flag hard-coded API URLs, endpoints, or service URLs (should be in config)
+- Flag hard-coded constants, magic numbers, or feature flags (should be configurable)
+- Flag hard-coded environment-specific values (dev/staging/prod URLs)
+- Enforce use of environment variables (.env files) or configuration modules
+- Never allow hard-coded secrets, tokens, or database credentials (covered in secrets check)
+

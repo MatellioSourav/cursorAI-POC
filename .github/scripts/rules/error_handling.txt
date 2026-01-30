@@ -1,0 +1,12 @@
+**Error Handling & Resilience:**
+- **CRITICAL**: Flag swallowed exceptions (empty catch blocks that ignore errors)
+- Flag overly generic exception handling (catch (Exception) or catch (Error) without specific handling)
+- Check for inconsistent error propagation (some errors logged, others not)
+- Verify correct HTTP status codes for API responses (200 for success, 400 for client errors, 500 for server errors)
+- Flag missing fallback logic for critical operations
+- Ensure errors are caught and handled appropriately (try-catch, promises, async/await)
+- Check for unhandled promise rejections
+- Verify graceful degradation when errors occur
+- Flag generic catch blocks that swallow errors without logging
+- Validate error messages are user-friendly and informative (not exposing internals)
+
